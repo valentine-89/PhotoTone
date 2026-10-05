@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.1')
+param([string]$Version = '1.1.0')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $publishFolder = Join-Path $projectRoot 'dist\PhotoTone'
