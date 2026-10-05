@@ -1,66 +1,59 @@
-<Window x:Class="PhotoTone.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="PhotoTone · 1.0.1" Style="{StaticResource {x:Type Window}}" Width="1460" Height="900" MinWidth="1200" MinHeight="720" WindowStartupLocation="CenterScreen" AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver" Closing="OnClosing">
-  <Grid Margin="18">
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <DockPanel Margin="0,0,0,16">
-      <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="PhotoTone" FontSize="25" FontWeight="SemiBold"/><Border Background="#213D35" CornerRadius="4" Margin="12,0,0,0" Padding="8,4" VerticalAlignment="Center"><TextBlock Text="FULL RESOLUTION" Foreground="{StaticResource Accent}" FontSize="10" FontWeight="Bold"/></Border></StackPanel>
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-        <Button x:Name="AddButton" Content="＋ Thêm ảnh" Click="AddImages"/>
-        <Button x:Name="SampleButton" Content="Bộ ảnh mẫu" Click="LoadSamples"/>
-        <Button Content="Thư mục xuất" Click="OpenOutput"/>
-        <Button x:Name="StartButton" Content="▶ Xử lý đã chọn" Style="{StaticResource Primary}" Click="StartBatch" Margin="10,0,6,0"/>
-        <Button x:Name="StopButton" Content="Dừng" Click="StopBatch" IsEnabled="False" Margin="0"/>
-      </StackPanel>
+<Window x:Class="PhotoTone.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="clr-namespace:PhotoTone.Controls" Title="PhotoTone · 1.1.0" Style="{StaticResource {x:Type Window}}" Width="1380" Height="900" MinWidth="980" MinHeight="600" WindowStartupLocation="CenterScreen" AllowDrop="True" DragOver="OnDragOver" Drop="OnDrop" Closing="OnClosing">
+  <Grid Margin="16">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,12">
+      <TextBlock Text="PhotoTone" FontSize="25" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,20,0"/>
+      <WrapPanel HorizontalAlignment="Right" VerticalAlignment="Center">
+        <Button Content="＋ Thêm ảnh" Click="AddImages"/>
+        <Button Content="Thêm thư mục" Click="AddFolder"/>
+        <Button x:Name="StartButton" Content="▶ Xử lý" Click="StartBatch" Style="{StaticResource Primary}"/>
+        <Button x:Name="StopButton" Content="Dừng" Click="StopBatch" IsEnabled="False"/>
+        <Button x:Name="ExportButton" Content="Xuất tất cả" Click="ExportAll"/>
+        <Button x:Name="CleanButton" Content="Dọn dẹp" Click="CleanWorkspace"/>
+        <Button x:Name="ConfigButton" Content="Cấu hình" Click="Configure" Margin="0"/>
+      </WrapPanel>
     </DockPanel>
-    <Grid Grid.Row="1">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="230"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="330"/></Grid.ColumnDefinitions>
-      <Grid>
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <DockPanel Margin="0,0,0,10"><TextBlock Text="DANH SÁCH ẢNH" Foreground="{StaticResource Muted}" FontSize="11" FontWeight="SemiBold"/><TextBlock x:Name="CountLabel" HorizontalAlignment="Right" Foreground="{StaticResource Accent}"/></DockPanel>
-        <ListBox x:Name="QueueList" Grid.Row="1" SelectionChanged="SelectionChanged">
-          <ListBox.ItemTemplate><DataTemplate><StackPanel>
-            <DockPanel><CheckBox IsChecked="{Binding Selected}" Margin="0,0,8,0"/><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/></DockPanel>
-            <DockPanel Margin="0,7,0,0"><TextBlock Text="{Binding Dimensions}" Foreground="{StaticResource Muted}" FontSize="11"/><TextBlock Text="{Binding CostLabel}" HorizontalAlignment="Right" Foreground="{StaticResource Muted}" FontSize="11"/></DockPanel>
-            <TextBlock Text="{Binding State}" Foreground="{StaticResource Accent}" Margin="0,5,0,0" FontSize="12"/>
-            <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" MaxHeight="64" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" Foreground="{StaticResource Muted}" FontSize="10" Margin="0,3,0,0"/>
-          </StackPanel></DataTemplate></ListBox.ItemTemplate>
-        </ListBox>
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0"><Button x:Name="ToggleButton" Content="Chọn tất cả" Click="SelectAll" Padding="8,5"/><Button x:Name="RemoveButton" Content="Bỏ khỏi danh sách" Click="RemoveJob" Padding="8,5" Margin="0"/></StackPanel>
-      </Grid>
-      <Grid Grid.Column="2">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <DockPanel Margin="0,0,0,10"><TextBlock x:Name="PreviewTitle" Text="Xem ảnh" FontWeight="SemiBold" VerticalAlignment="Center"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="BeforeButton" Content="Ảnh gốc" Click="ShowBefore" Padding="10,4"/><Button x:Name="AfterButton" Content="Kết quả" Click="ShowAfter" Padding="10,4"/><Button Content="Mở ảnh" Click="OpenSelected" Padding="10,4" Margin="0"/></StackPanel></DockPanel>
-        <Border Grid.Row="1" Background="#0A0F14" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" ClipToBounds="True">
-          <Grid><Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/><TextBlock x:Name="EmptyPreview" Text="Thêm ảnh hoặc kéo ảnh vào đây" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
-        </Border>
-        <DockPanel Grid.Row="2" Margin="0,10,0,0"><TextBlock x:Name="PixelLabel" Foreground="{StaticResource Muted}" FontSize="12"/><TextBlock x:Name="ModeLabel" Text="Ảnh gốc" HorizontalAlignment="Right" Foreground="{StaticResource Accent}" FontSize="12"/></DockPanel>
-      </Grid>
-      <Border Grid.Column="4" Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="7" Padding="14">
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-          <StackPanel x:Name="SettingsPanel">
-            <DockPanel><TextBlock Text="CẤU HÌNH" Foreground="{StaticResource Muted}" FontSize="11" FontWeight="SemiBold"/><Button Content="Lưu" Click="SaveConfig" HorizontalAlignment="Right" Padding="12,3" Margin="0"/></DockPanel>
-            <TextBlock Text="API URL" Style="{StaticResource Label}"/><TextBox x:Name="ApiBaseBox" TextChanged="EndpointChanged"/>
-            <TextBlock Text="API key" Style="{StaticResource Label}"/><PasswordBox x:Name="KeyBox"/>
-            <DockPanel Margin="0,9,0,5"><TextBlock Text="MODEL" Foreground="{StaticResource Muted}" FontSize="11" VerticalAlignment="Center"/><Button x:Name="RefreshButton" Content="Tải model" Click="RefreshModels" HorizontalAlignment="Right" Padding="10,3" Margin="0"/></DockPanel>
-            <ComboBox x:Name="ModelBox" IsEditable="True" IsTextSearchEnabled="False" SelectionChanged="ModelChanged"/>
-            <Grid Margin="0,2,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions>
-              <StackPanel><TextBlock Text="Độ phân giải AI" Style="{StaticResource Label}"/><ComboBox x:Name="ResolutionBox"/></StackPanel>
-              <StackPanel Grid.Column="2"><TextBlock Text="Số ảnh đồng thời" Style="{StaticResource Label}"/><ComboBox x:Name="ConcurrencyBox"/></StackPanel>
+    <DockPanel Grid.Row="1" Margin="0,0,0,8">
+      <Button Content="Chọn tất cả" Click="SelectAll" Padding="10,4"/>
+      <TextBlock x:Name="CountLabel" VerticalAlignment="Center" Margin="8,0" Foreground="{StaticResource Muted}"/>
+      <TextBlock x:Name="QueueLabel" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource Accent}"/>
+    </DockPanel>
+    <Grid Grid.Row="2">
+      <TextBlock x:Name="EmptyLabel" Text="Thả ảnh hoặc thư mục vào đây" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="21" Foreground="{StaticResource Muted}"/>
+      <ListBox x:Name="QueueList" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel" VirtualizingPanel.CacheLength="0" HorizontalContentAlignment="Stretch">
+        <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <Grid>
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="320"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+              <DockPanel Margin="0,0,0,7">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                  <TextBlock Text="{Binding ExportLabel}" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="10,0"/>
+                  <Button Content="Chỉnh bổ sung" Click="Refine" IsEnabled="{Binding CanEdit}" Padding="10,4"/>
+                  <Button Content="Hoàn tác" Click="Undo" IsEnabled="{Binding CanUndo}" Padding="10,4"/>
+                  <Button Content="×" Click="RemoveJob" Padding="10,4" ToolTip="Bỏ ảnh khỏi bàn làm việc"/>
+                </StackPanel>
+                <CheckBox IsChecked="{Binding Selected}" Checked="SelectionUpdated" Unchecked="SelectionUpdated" Margin="0,0,9,0"/>
+                <TextBlock Text="{Binding Name}" ToolTip="{Binding SourcePath}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+              </DockPanel>
+              <Grid Grid.Row="1" Margin="0,0,0,5"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><TextBlock Text="Ảnh gốc" Foreground="{StaticResource Muted}" FontSize="11"/><TextBlock Grid.Column="1" Text="Kết quả" Foreground="{StaticResource Muted}" FontSize="11" Margin="6,0,0,0"/></Grid>
+              <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="12"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                <Border Background="#0A0F14" CornerRadius="4" ClipToBounds="True" MouseLeftButtonUp="ViewSource" Cursor="Hand"><ui:AsyncPreview FilePath="{Binding SourcePath}"/></Border>
+                <Border Grid.Column="2" Background="#0A0F14" CornerRadius="4" ClipToBounds="True" MouseLeftButtonUp="ViewResult" Cursor="Hand">
+                  <Grid><TextBlock Text="{Binding State}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/><ui:AsyncPreview FilePath="{Binding OutputPath}"/></Grid>
+                </Border>
+              </Grid>
+              <DockPanel Grid.Row="3" Margin="0,8,0,0">
+                <TextBlock DockPanel.Dock="Right" Text="{Binding CostLabel}" Foreground="{StaticResource Muted}"/>
+                <TextBlock Text="{Binding Dimensions}" Foreground="{StaticResource Muted}" Margin="0,0,16,0"/>
+                <TextBlock Text="{Binding State}" Foreground="{StaticResource Accent}" Margin="0,0,12,0"/>
+                <TextBlock Text="{Binding Detail}" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}"/>
+              </DockPanel>
             </Grid>
-            <TextBlock Text="Ảnh mẫu hoàn thiện" Style="{StaticResource Label}"/>
-            <Border Height="96" Background="#0A0F14" CornerRadius="4" ClipToBounds="True"><Image x:Name="ReferenceImage" Stretch="Uniform"/></Border>
-            <DockPanel Margin="0,6,0,0"><TextBlock x:Name="ReferenceLabel" Foreground="{StaticResource Muted}" FontSize="11" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="Đổi ảnh" Click="ChangeReference" Padding="8,3"/><Button Content="Mẫu gốc" Click="ResetReference" Padding="8,3" Margin="0"/></StackPanel></DockPanel>
-            <DockPanel Margin="0,10,0,5"><TextBlock Text="PROMPT" Foreground="{StaticResource Muted}" FontSize="11" VerticalAlignment="Center"/><Button Content="Khôi phục" Click="ResetPrompt" HorizontalAlignment="Right" Padding="8,3" Margin="0"/></DockPanel>
-            <TextBox x:Name="PromptBox" Height="120" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontSize="12" VerticalContentAlignment="Top"/>
-            <Grid Margin="0,3,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions>
-              <StackPanel><TextBlock Text="Định dạng xuất" Style="{StaticResource Label}"/><ComboBox x:Name="FormatBox"/></StackPanel>
-              <StackPanel Grid.Column="2"><TextBlock Text="Kích thước xuất" Style="{StaticResource Label}"/><TextBox Text="Bằng ảnh gốc" IsReadOnly="True" Foreground="{StaticResource Accent}"/></StackPanel>
-            </Grid>
-            <DockPanel Margin="0,9,0,5"><TextBlock Text="THƯ MỤC XUẤT" Foreground="{StaticResource Muted}" FontSize="11" VerticalAlignment="Center"/><Button Content="Chọn" Click="ChooseOutput" Padding="9,3" HorizontalAlignment="Right" Margin="0"/></DockPanel>
-            <TextBox x:Name="OutputBox" FontSize="11"/>
-          </StackPanel>
-        </ScrollViewer>
-      </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
     </Grid>
-    <Grid Grid.Row="2" Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/></Grid.ColumnDefinitions><TextBlock x:Name="StatusLabel" Text="Sẵn sàng" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/><ProgressBar x:Name="BatchProgress" Grid.Column="1" Height="5" Foreground="{StaticResource Accent}" Background="#263341" BorderThickness="0" Minimum="0" Maximum="100"/></Grid>
+    <DockPanel Grid.Row="3" Margin="0,10,0,0"><ProgressBar x:Name="BatchProgress" DockPanel.Dock="Right" Width="160" Height="5" Maximum="100" Foreground="{StaticResource Accent}"/><TextBlock x:Name="StatusLabel" Text="Sẵn sàng" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis" Margin="0,0,12,0"/></DockPanel>
   </Grid>
 </Window>

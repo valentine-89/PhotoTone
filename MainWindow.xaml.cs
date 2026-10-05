@@ -1,9 +1,9 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Microsoft.Win32;
 using PhotoTone.Core;
 
@@ -13,251 +13,309 @@ public partial class MainWindow : Window
 {
     public ObservableCollection<PhotoJob> Jobs { get; } = [];
     private readonly OpenRouterClient client = new();
-    private readonly Settings settings;
-    private IReadOnlyList<ImageModel> models = [];
-    private CancellationTokenSource? batchCancellation;
-    private bool showingResult;
-    private bool initialized;
-    private bool loadingModels;
-    private string referencePath;
-    private string credentialEndpoint;
-    private bool closeAfterCancel;
+    private Settings settings;
+    private readonly WorkspaceStore? workspace;
+    private readonly BatchRunner runner;
     private readonly bool previewOnly;
-
+    private string apiKey = "";
+    private int importing;
+    private bool preparing, exporting, closing, initialized;
+    private CancellationTokenSource? preparationCancel;
+    private Task exportTask = Task.CompletedTask;
+    private readonly HashSet<Task> importTasks = new();
+    private CancellationTokenSource lifetime = new();
+    private readonly SemaphoreSlim importGate = new(1);
     public MainWindow(bool previewOnly = false)
     {
         this.previewOnly = previewOnly;
         InitializeComponent();
+        runner = new BatchRunner(ProcessItemAsync); runner.Changed += UpdateControls;
+        runner.Failed += (item, ex) => FailItem(item, ex);
         AppFiles.Initialize();
-        settings = previewOnly ? new Settings { ReferencePath = Path.Combine(AppFiles.Samples, "ok.jpg"), Prompt = AppFiles.DefaultPrompt,
-            OutputDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "PhotoTone") } : AppFiles.LoadSettings();
-        referencePath = settings.ReferencePath;
-        credentialEndpoint = settings.ApiBase.TrimEnd('/');
-        ApiBaseBox.Text = settings.ApiBase;
-        try { if (settings.KeyEndpoint == credentialEndpoint) KeyBox.Password = SecretStore.Unprotect(settings.EncryptedKey); }
-        catch { StatusLabel.Text = "Không đọc được API key đã lưu. Vui lòng nhập lại."; }
-        ModelBox.Text = settings.Model;
-        ResolutionBox.ItemsSource = new[] { "Gốc", "4K", "2K", "1K" }; ResolutionBox.SelectedItem = settings.Resolution;
-        ConcurrencyBox.ItemsSource = new[] { 1, 2, 3, 4 }; ConcurrencyBox.SelectedItem = settings.Concurrency;
-        FormatBox.ItemsSource = new[] { "JPEG", "PNG" }; FormatBox.SelectedItem = settings.Format;
-        PromptBox.Text = settings.Prompt; OutputBox.Text = settings.OutputDirectory;
-        QueueList.ItemsSource = Jobs;
-        LoadReference(); AddSamples();
-        initialized = true;
-    }
-    private void SetStatus(string text) => StatusLabel.Text = text;
-    private void EndpointChanged(object sender, TextChangedEventArgs e)
-    {
-        if (!initialized) return;
-        if (ApiBaseBox.Text.TrimEnd('/') != credentialEndpoint)
+        settings = previewOnly ? new Settings { ReferencePath = Path.Combine(AppFiles.Samples, "ok.jpg"), Prompt = AppFiles.DefaultPrompt } : AppFiles.LoadSettings();
+        if (!previewOnly)
         {
-            KeyBox.Clear(); credentialEndpoint = ApiBaseBox.Text.TrimEnd('/');
-            models = []; ModelBox.ItemsSource = null;
-            SetStatus("API URL đã đổi. Nhập key cho endpoint này và tải lại model.");
-        }
-    }
-    private void AddImages(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFileDialog { Multiselect = true, Filter = "Ảnh|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp" };
-        if (dialog.ShowDialog(this) == true) AddPaths(dialog.FileNames);
-    }
-    public void AddPaths(IEnumerable<string> paths)
-    {
-        var errors = new List<string>();
-        foreach (var path in paths)
-        {
+            workspace = new WorkspaceStore();
             try
             {
-                if (!File.Exists(path) || Jobs.Any(j => string.Equals(j.SourcePath, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))) continue;
-                if (!new[] { ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp" }.Contains(Path.GetExtension(path).ToLowerInvariant()))
-                    throw new InvalidDataException("Định dạng ảnh chưa được hỗ trợ.");
-                if (new FileInfo(path).Length > ImageFiles.MaxFileBytes) throw new InvalidDataException("Ảnh vượt 40 MB.");
-                var size = ImageFiles.Size(path);
-                Jobs.Add(new PhotoJob { SourcePath = Path.GetFullPath(path), Width = size.Width, Height = size.Height });
+                foreach (var job in workspace.Load()) Jobs.Add(job);
+                workspace.Save(Jobs); workspace.Prune(Jobs);
+                try { if (settings.KeyEndpoint == settings.ApiBase.TrimEnd('/')) apiKey = SecretStore.Unprotect(settings.EncryptedKey); }
+                catch { SetStatus("Không đọc được API key đã lưu. Nhập lại trong Cấu hình."); }
             }
-            catch (Exception ex) { errors.Add(Path.GetFileName(path) + ": " + ex.Message); }
+            catch { workspace.Dispose(); throw; }
         }
-        CountLabel.Text = Jobs.Count.ToString();
-        if (QueueList.SelectedItem is null && Jobs.Count > 0) QueueList.SelectedIndex = 0;
-        SetStatus(errors.Count > 0 ? string.Join(" · ", errors.Take(3)) : $"{Jobs.Count} ảnh · Giữ nguyên kích thước ảnh gốc");
+        else
+        {
+            foreach (var name in new[] { "raw.jpg", "raw1.jpg", "raw2.jpg" })
+            {
+                var path = Path.Combine(AppFiles.Samples, name); var size = ImageFiles.Size(path);
+                Jobs.Add(new PhotoJob { SourcePath = path, Width = size.Width, Height = size.Height, State = "Hoàn tất", Current = new ResultVersion { Path = Path.Combine(AppFiles.Samples, "ok.jpg"), ProviderSize = size, Attempt = new() } });
+            }
+        }
+        QueueList.ItemsSource = Jobs;
+        runner.Concurrency = settings.Concurrency; initialized = true; UpdateControls();
     }
-    private void AddSamples() => AddPaths(new[] { "raw.jpg", "raw1.jpg", "raw2.jpg" }.Select(n => Path.Combine(AppFiles.Samples, n)));
-    private void LoadSamples(object sender, RoutedEventArgs e) => AddSamples();
-    private void SelectionChanged(object sender, SelectionChangedEventArgs e) { showingResult = (QueueList.SelectedItem as PhotoJob)?.OutputPath is not null; UpdatePreview(); }
-    private void ShowBefore(object sender, RoutedEventArgs e) { showingResult = false; UpdatePreview(); }
-    private void ShowAfter(object sender, RoutedEventArgs e) { showingResult = true; UpdatePreview(); }
-    private void UpdatePreview()
+    private void SetStatus(string text) => StatusLabel.Text = text;
+    private void Persist() { if (!previewOnly) workspace!.Save(Jobs); }
+    private void SafePersist() { try { Persist(); } catch (Exception ex) { SetStatus("Không lưu được bàn làm việc: " + ex.Message); } }
+    private void UpdateControls()
     {
-        if (QueueList.SelectedItem is not PhotoJob job) { PreviewImage.Source = null; EmptyPreview.Visibility = Visibility.Visible; return; }
-        var path = showingResult ? job.OutputPath : job.SourcePath;
-        if (path is null) { SetStatus("Ảnh này chưa có kết quả."); showingResult = false; path = job.SourcePath; }
+        if (!initialized) return;
+        CountLabel.Text = $"{Jobs.Count} ảnh · {Jobs.Count(j => j.Current is not null)} kết quả";
+        EmptyLabel.Visibility = Jobs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        QueueLabel.Text = runner.IsBusy ? $"{runner.Active} đang chạy · {runner.Pending} chờ · {runner.Finished}/{runner.Total}" : $"Tối đa {settings.Concurrency} ảnh đồng thời";
+        BatchProgress.Value = runner.Total == 0 ? 0 : 100.0 * runner.Finished / runner.Total;
+        StartButton.IsEnabled = !preparing && !runner.Stopping && !closing && !previewOnly;
+        StopButton.IsEnabled = preparing || runner.IsBusy;
+        CleanButton.IsEnabled = !runner.IsBusy && !preparing && !exporting && importing == 0 && !closing && !previewOnly;
+        ConfigButton.IsEnabled = !runner.IsBusy && !preparing && !closing && !previewOnly;
+        ExportButton.IsEnabled = !exporting && !closing && !previewOnly && Jobs.Any(j => j.Current is not null);
+    }
+    private void SelectionUpdated(object sender, RoutedEventArgs e) { if (initialized) SafePersist(); }
+    private void SelectAll(object sender, RoutedEventArgs e) { bool value = Jobs.Any(j => !j.Selected); foreach (var job in Jobs) job.Selected = value; SafePersist(); }
+    private void AddImages(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFileDialog { Filter = PhotoImporter.Filter, Multiselect = true };
+        if (picker.ShowDialog(this) == true) AddPaths(picker.FileNames);
+    }
+    private void AddFolder(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFolderDialog { Title = "Chọn thư mục ảnh", Multiselect = true };
+        if (picker.ShowDialog(this) == true) AddPaths(picker.FolderNames);
+    }
+    public async void AddPaths(IEnumerable<string> paths)
+    {
+        if (closing || previewOnly) return;
+        var task = ImportAsync(paths.ToArray()); importTasks.Add(task);
+        try { await task; } finally { importTasks.Remove(task); }
+    }
+    private async Task ImportAsync(string[] paths)
+    {
+        importing++; UpdateControls(); SetStatus("Đang đọc ảnh…"); bool entered = false;
         try
         {
-            PreviewImage.Source = ImageFiles.Load(path, 1500);
-            EmptyPreview.Visibility = Visibility.Collapsed;
-            PreviewTitle.Text = job.Name;
-            PixelLabel.Text = ImageFiles.Size(path) + " px";
-            ModeLabel.Text = showingResult ? "Kết quả" : "Ảnh gốc";
-            BeforeButton.Opacity = showingResult ? .6 : 1;
-            AfterButton.Opacity = showingResult ? 1 : .6;
+            await importGate.WaitAsync(lifetime.Token); entered = true;
+            var existing = Jobs.Select(j => j.SourcePath).ToArray();
+            var result = await Task.Run(() => PhotoImporter.Import(paths, existing, lifetime.Token));
+            var seen = Jobs.Select(j => j.SourcePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            int added = 0;
+            foreach (var job in result.Jobs)
+            {
+                if (seen.Add(job.SourcePath)) { Jobs.Add(job); added++; }
+                if (added % 40 == 0) await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+            }
+            Persist();
+            SetStatus($"Đã thêm {added} ảnh" + (result.Errors.Count > 0 ? $" · {result.Errors.Count} mục bị bỏ qua: {string.Join(" · ", result.Errors.Take(2))}" : ""));
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex) { SetStatus(ex.Message); }
+        finally { if (entered) importGate.Release(); importing--; UpdateControls(); }
     }
-    private void LoadReference()
+    private void OnDragOver(object sender, DragEventArgs e) { e.Effects = !closing && e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None; e.Handled = true; }
+    private void OnDrop(object sender, DragEventArgs e) { if (e.Data.GetData(DataFormats.FileDrop) is string[] paths) AddPaths(paths); }
+    private async void Configure(object sender, RoutedEventArgs e)
     {
-        try { ReferenceImage.Source = ImageFiles.Load(referencePath, 560); ReferenceLabel.Text = Path.GetFileName(referencePath); }
-        catch (Exception ex) { ReferenceImage.Source = null; ReferenceLabel.Text = "Chưa có ảnh mẫu"; SetStatus(ex.Message); }
+        var dialog = new SettingsWindow(settings, apiKey) { Owner = this };
+        if (dialog.ShowDialog() != true) return;
+        settings = dialog.SavedSettings; apiKey = dialog.ApiKey; runner.Concurrency = settings.Concurrency; UpdateControls();
+        if (dialog.AddSamples) await ImportAsync(new[] { "raw.jpg", "raw1.jpg", "raw2.jpg" }.Select(n => Path.Combine(AppFiles.Samples, n)).ToArray());
     }
-    private void ChangeReference(object sender, RoutedEventArgs e)
+    private async Task<BatchOptions> OptionsAsync(CancellationToken token)
     {
-        var dialog = new OpenFileDialog { Filter = "Ảnh|*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.bmp" };
-        if (dialog.ShowDialog(this) == true) { referencePath = dialog.FileName; LoadReference(); }
-    }
-    private void ResetReference(object sender, RoutedEventArgs e) { referencePath = Path.Combine(AppFiles.Samples, "ok.jpg"); LoadReference(); }
-    private void ResetPrompt(object sender, RoutedEventArgs e) => PromptBox.Text = AppFiles.DefaultPrompt;
-    private void ChooseOutput(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFolderDialog { Title = "Chọn thư mục xuất ảnh", Multiselect = false };
-        if (dialog.ShowDialog(this) == true) OutputBox.Text = dialog.FolderName;
-    }
-    private void OpenOutput(object sender, RoutedEventArgs e)
-    {
-        try { Directory.CreateDirectory(OutputBox.Text); Process.Start(new ProcessStartInfo(OutputBox.Text) { UseShellExecute = true }); }
-        catch (Exception ex) { SetStatus(ex.Message); }
-    }
-    private void OpenSelected(object sender, RoutedEventArgs e)
-    {
-        if (QueueList.SelectedItem is not PhotoJob job) return;
-        var path = showingResult && job.OutputPath is not null ? job.OutputPath : job.SourcePath;
-        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch (Exception ex) { SetStatus(ex.Message); }
-    }
-    private void SelectAll(object sender, RoutedEventArgs e) { bool value = Jobs.Any(j => !j.Selected); foreach (var job in Jobs) job.Selected = value; }
-    private void RemoveJob(object sender, RoutedEventArgs e)
-    {
-        if (QueueList.SelectedItem is PhotoJob job) Jobs.Remove(job);
-        CountLabel.Text = Jobs.Count.ToString();
-    }
-    private void OnDragOver(object sender, DragEventArgs e) { e.Effects = batchCancellation is null && e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None; e.Handled = true; }
-    private void OnDrop(object sender, DragEventArgs e) { if (batchCancellation is null && e.Data.GetData(DataFormats.FileDrop) is string[] paths) AddPaths(paths); }
-    private async void RefreshModels(object sender, RoutedEventArgs e)
-    {
-        try { await LoadModelsAsync(); } catch (Exception ex) { SetStatus(ex.Message); }
-    }
-    private async Task LoadModelsAsync()
-    {
-        if (loadingModels) return;
-        loadingModels = true; RefreshButton.IsEnabled = false;
-        var selected = ModelBox.Text;
-        var api = ApiBaseBox.Text.Trim();
-        SetStatus("Đang tải danh sách model chỉnh ảnh…");
-        try
-        {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-            var loaded = await client.ModelsAsync(api, timeout.Token);
-            if (ApiBaseBox.Text.Trim() != api) return;
-            models = loaded; ModelBox.ItemsSource = models; ModelBox.Text = selected;
-            var match = models.FirstOrDefault(m => m.Id == selected);
-            if (match is not null) ModelBox.SelectedItem = match;
-            SetStatus($"{models.Count} model nhận ảnh gốc và ảnh mẫu.");
-        }
-        finally { loadingModels = false; RefreshButton.IsEnabled = true; }
-    }
-    private void ModelChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (ResolutionBox is null || ModelBox.SelectedItem is not ImageModel model) return;
-        var selected = ResolutionBox.SelectedItem as string ?? settings?.Resolution ?? "4K";
-        var choices = new[] { "Gốc" }.Concat(model.Values("resolution")).Distinct().ToList();
-        ResolutionBox.ItemsSource = choices;
-        ResolutionBox.SelectedItem = choices.Contains(selected) ? selected : null;
-        if (ResolutionBox.SelectedItem is null) SetStatus($"{model.Id} không hỗ trợ {selected}. Chọn lại độ phân giải; app không tự đổi model.");
-    }
-    private void CaptureSettings()
-    {
-        if (previewOnly) return;
-        OpenRouterClient.Endpoint(ApiBaseBox.Text, "images");
-        settings.ApiBase = ApiBaseBox.Text.Trim().TrimEnd('/');
-        settings.Model = ModelBox.Text.Trim();
-        settings.KeyEndpoint = settings.ApiBase;
-        settings.EncryptedKey = SecretStore.Protect(KeyBox.Password.Trim());
-        settings.Resolution = ResolutionBox.SelectedItem as string ?? settings.Resolution;
-        settings.Concurrency = ConcurrencyBox.SelectedItem is int number ? number : 1;
-        settings.Format = FormatBox.SelectedItem as string ?? "JPEG";
-        settings.ReferencePath = referencePath; settings.Prompt = PromptBox.Text; settings.OutputDirectory = OutputBox.Text.Trim();
-        AppFiles.SaveSettings(settings);
-    }
-    private void SaveConfig(object sender, RoutedEventArgs e)
-    {
-        try { CaptureSettings(); SetStatus("Đã lưu cấu hình. API key được mã hóa theo tài khoản Windows."); }
-        catch (Exception ex) { SetStatus(ex.Message); }
-    }
-    private void Busy(bool busy)
-    {
-        SettingsPanel.IsEnabled = AddButton.IsEnabled = SampleButton.IsEnabled = RemoveButton.IsEnabled = ToggleButton.IsEnabled = StartButton.IsEnabled = !busy;
-        StopButton.IsEnabled = busy;
+        if (string.IsNullOrWhiteSpace(apiKey)) throw new InvalidOperationException("Nhập API key trong Cấu hình.");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(25));
+        var models = await client.ModelsAsync(settings.ApiBase, timeout.Token);
+        var model = models.FirstOrDefault(m => m.Id == settings.Model) ?? throw new InvalidOperationException("Model không có trong Image API. Chọn lại trong Cấu hình.");
+        return new(settings.ApiBase, apiKey, model, settings.Resolution, settings.Concurrency, "PNG", settings.ReferencePath, settings.Prompt, workspace!.Root);
     }
     private async void StartBatch(object sender, RoutedEventArgs e)
     {
-        if (batchCancellation is not null) return;
-        var selected = Jobs.Where(j => j.Selected && j.OutputPath is null).ToArray();
-        if (selected.Length == 0) { SetStatus("Chọn ảnh chưa có kết quả để xử lý."); return; }
-        if (string.IsNullOrWhiteSpace(KeyBox.Password)) { SetStatus("Nhập API key của bạn trước khi xử lý."); KeyBox.Focus(); return; }
-        if (string.IsNullOrWhiteSpace(PromptBox.Text) || !File.Exists(referencePath)) { SetStatus("Cần prompt và ảnh mẫu hợp lệ."); return; }
-        batchCancellation = new CancellationTokenSource(); Busy(true);
+        var jobs = Jobs.Where(j => j.Selected && j.Current is null && !j.Busy).ToArray();
+        if (jobs.Length == 0) { SetStatus("Chọn ảnh chưa có kết quả để xử lý."); return; }
+        await PrepareAsync(jobs, null);
+    }
+    private async Task PrepareAsync(PhotoJob[] jobs, EditDraft? draft, BatchOptions? knownOptions = null)
+    {
+        if (preparing || runner.Stopping || closing || previewOnly) return;
+        preparing = true; preparationCancel = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        var token = preparationCancel.Token; foreach (var job in jobs) job.Busy = true; UpdateControls();
         try
         {
-            if (models.Count == 0) await LoadModelsAsync();
-            var model = models.FirstOrDefault(m => m.Id == ModelBox.Text.Trim()) ?? throw new InvalidOperationException("Model chưa có trong danh sách Image API. Chọn model và tải lại danh sách.");
-            if (ResolutionBox.SelectedItem is not string) throw new InvalidOperationException("Chọn độ phân giải phù hợp với model.");
-            CaptureSettings();
-            if (!Path.IsPathFullyQualified(settings.OutputDirectory)) throw new InvalidOperationException("Thư mục xuất phải là đường dẫn đầy đủ.");
-            var options = new BatchOptions(settings.ApiBase, KeyBox.Password.Trim(), model, settings.Resolution, settings.Concurrency,
-                settings.Format, referencePath, settings.Prompt, settings.OutputDirectory);
-            int blocked = 0;
-            foreach (var job in selected)
+            var options = knownOptions ?? await OptionsAsync(token);
+            var items = new List<WorkItem>(); var failures = new List<string>();
+            foreach (var job in jobs)
             {
+                token.ThrowIfCancellationRequested();
                 try
                 {
-                    OpenRouterClient.RequestBody(options, new(job.Width, job.Height), "", "");
-                    job.State = "Sẵn sàng"; job.Detail = "";
+                    var input = draft is null ? job.SourcePath : job.OutputPath ?? throw new IOException("Ảnh chưa có kết quả.");
+                    var parent = job.Current?.Id;
+                    var item = await Task.Run(() =>
+                    {
+                        var value = new WorkItem(job, options, draft, input, FileStamp.Read(input), parent, draft is null ? FileStamp.Read(options.ReferencePath) : null);
+                        EditComposer.Validate(value); return value;
+                    }, token);
+                    // Preflight decoding/encoding catches damaged references and >40 MB PNG before ANY API call in this submission.
+                    await StaWork.Run(() => { EditComposer.Compose(item); return true; }, token);
+                    items.Add(item);
                 }
-                catch (InvalidOperationException ex)
-                {
-                    job.State = "Không đủ độ phân giải"; job.Detail = ex.Message; blocked++;
-                }
+                catch (Exception ex) when (ex is not OperationCanceledException) { job.State = "Chưa thể xử lý"; job.Detail = ex.Message; failures.Add(job.Name); }
             }
-            if (blocked > 0) { SetStatus($"{blocked} ảnh chưa phù hợp với model/độ phân giải đã chọn. Chưa gửi ảnh nào tới API."); return; }
-            foreach (var job in selected) { job.State = "Trong hàng đợi"; job.Cost = null; }
-            int finished = 0;
-            var progress = new Progress<JobUpdate>(update =>
+            token.ThrowIfCancellationRequested();
+            if (failures.Count > 0) throw new InvalidOperationException($"{failures.Count} ảnh chưa hợp lệ; lượt này chưa gửi ảnh nào tới API.");
+            foreach (var item in items)
             {
-                update.Job.State = update.State; update.Job.Detail = update.Detail;
-                if (update.Cost is not null) update.Job.Cost = update.Cost;
-                if (update.OutputPath is not null) update.Job.OutputPath = update.OutputPath;
-                if (update.State is "Hoàn tất" or "Lỗi" or "Đã dừng" or "Hết thời gian") finished++;
-                BatchProgress.Value = 100.0 * finished / selected.Length;
-                SetStatus($"{finished}/{selected.Length} ảnh · {update.Job.Name}: {update.State}");
-                if (update.OutputPath is not null && QueueList.SelectedItem == update.Job) { showingResult = true; UpdatePreview(); }
-            });
-            SetStatus($"Đang xử lý {selected.Length} ảnh qua {model.Id}…");
-            var token = batchCancellation.Token;
-            await Task.Run(() => new BatchRunner(client).RunAsync(selected, options, progress, token));
-            await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Background);
-            var completed = selected.Count(j => j.OutputPath is not null);
-            var cost = selected.Where(j => j.Cost is not null).Sum(j => j.Cost ?? 0);
-            SetStatus($"Hoàn tất {completed}/{selected.Length} ảnh · Chi phí API đã báo: ${cost:0.0000} · {settings.OutputDirectory}");
+                item.Job.State = "Trong hàng đợi"; item.Job.Detail = "";
+                item.Job.LastAttempt = new AttemptInfo { Kind = draft is null ? "initial" : "refine", Model = options.Model.Id, Resolution = options.Resolution, Prompt = draft?.Prompt ?? options.Prompt, Draft = draft, ParentVersion = item.ParentVersion,
+                    InputSha256 = item.InputStamp.Sha256, ReferencePath = draft is null ? options.ReferencePath : null, ReferenceStamp = item.InitialReferenceStamp };
+            }
+            Persist(); runner.Enqueue(items); SetStatus($"Đã xếp {items.Count} ảnh vào hàng đợi.");
         }
+        catch (OperationCanceledException) { SetStatus("Đã dừng chuẩn bị ảnh."); }
         catch (Exception ex) { SetStatus(ex.Message); }
         finally
         {
-            batchCancellation.Dispose(); batchCancellation = null; Busy(false);
-            if (closeAfterCancel) Close();
+            foreach (var job in jobs) if (!runner.Contains(job.Id)) { job.Busy = false; if (job.LastAttempt?.Status == "queued") job.LastAttempt.Status = "cancelled"; }
+            preparationCancel.Dispose(); preparationCancel = null; preparing = false; SafePersist(); UpdateControls();
         }
     }
-    private void StopBatch(object sender, RoutedEventArgs e) { batchCancellation?.Cancel(); StopButton.IsEnabled = false; SetStatus("Đang dừng…"); }
-    private void OnClosing(object? sender, CancelEventArgs e)
+    private async Task ProcessItemAsync(WorkItem item, CancellationToken token)
     {
-        if (batchCancellation is not null) { e.Cancel = true; closeAfterCancel = true; batchCancellation.Cancel(); return; }
-        try { if (initialized) CaptureSettings(); } catch { /* Do not overwrite valid saved settings on a failed save. */ }
-        client.Dispose();
+        var job = item.Job; var attempt = job.LastAttempt!; var path = workspace!.NewResultPath();
+        using var held = workspace.Pin(new[] { path }.Concat(item.Draft is null ? [] : new[] { item.InputPath }));
+        try
+        {
+            if (job.Current?.Id != item.ParentVersion) throw new IOException("Phiên bản ảnh đã thay đổi. Hãy mở lại chỉnh bổ sung.");
+            attempt.Status = "running"; job.State = "Chuẩn bị ảnh"; Persist();
+            var prepared = await StaWork.Run(() => EditComposer.Compose(item), token); token.ThrowIfCancellationRequested();
+            job.State = "AI đang xử lý";
+            var result = await Task.Run(() => client.EditAsync(item.Options, new(job.Width, job.Height), prepared, token), token);
+            attempt.Cost = result.Cost; attempt.RequestId = result.RequestId;
+            if (result.Cost is not null) job.Cost = (job.Cost ?? 0) + result.Cost;
+            token.ThrowIfCancellationRequested(); job.State = "Kiểm tra pixel";
+            var size = await Task.Run(() => ImageFiles.Export(result.Bytes, new(job.Width, job.Height), path, "PNG"), token);
+            token.ThrowIfCancellationRequested();
+            attempt.Status = "completed"; attempt.FinishedUtc = DateTimeOffset.UtcNow;
+            workspace.Commit(job, new ResultVersion { Path = path, ProviderSize = size, Attempt = attempt }, Jobs);
+            SetStatus($"{job.Name}: hoàn tất.");
+        }
+        finally { job.Busy = false; }
+    }
+    private void FailItem(WorkItem item, Exception ex)
+    {
+        item.Job.Busy = false;
+        item.Job.State = ex is OperationCanceledException ? (runner.Stopping ? "Đã dừng" : "Hết thời gian") : "Lỗi";
+        item.Job.Detail = ex is OperationCanceledException ? "Không tự gửi lại yêu cầu." : ex.Message;
+        if (item.Job.LastAttempt is { } attempt) { attempt.Status = ex is OperationCanceledException ? "cancelled" : "failed"; attempt.FinishedUtc = DateTimeOffset.UtcNow; }
+        SafePersist(); workspace?.Prune(Jobs); SetStatus($"{item.Job.Name}: {item.Job.Detail}");
+    }
+    private void StopBatch(object sender, RoutedEventArgs e) => Stop();
+    private void Stop()
+    {
+        preparationCancel?.Cancel();
+        foreach (var item in runner.Stop()) FailItem(item, new OperationCanceledException());
+        SetStatus("Đang dừng…"); UpdateControls();
+    }
+    private static PhotoJob? Job(object sender) => (sender as FrameworkElement)?.DataContext as PhotoJob;
+    private void ViewSource(object sender, MouseButtonEventArgs e) { if (Job(sender) is { } job) ShowImage(job.SourcePath); }
+    private void ViewResult(object sender, MouseButtonEventArgs e) { if (Job(sender)?.OutputPath is { } path) ShowImage(path); }
+    private void ShowImage(string path) { var view = new EditWindow(path) { Owner = this }; view.ShowDialog(); }
+    private async void Refine(object sender, RoutedEventArgs e)
+    {
+        if (Job(sender) is not { CanEdit: true } job || preparing || previewOnly || closing) return;
+        try
+        {
+            preparing = true; UpdateControls();
+            preparationCancel = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); preparationCancel.CancelAfter(TimeSpan.FromSeconds(25));
+            var options = await OptionsAsync(preparationCancel.Token);
+            preparationCancel.Token.ThrowIfCancellationRequested();
+            preparationCancel.Dispose(); preparationCancel = null;
+            preparing = false; UpdateControls();
+            var retry = job.LastAttempt is { Status: not "completed", Draft: not null } attempt && attempt.ParentVersion == job.Current?.Id ? attempt.Draft : null;
+            var dialog = new EditWindow(job.OutputPath!, true, options.Model.MaxReferences, retry) { Owner = this };
+            if (dialog.ShowDialog() == true) await PrepareAsync([job], dialog.Draft!, options);
+        }
+        catch (Exception ex) { SetStatus(ex.Message); }
+        finally { preparationCancel?.Dispose(); preparationCancel = null; preparing = false; UpdateControls(); }
+    }
+    private void Undo(object sender, RoutedEventArgs e)
+    {
+        if (previewOnly || Job(sender) is not { CanUndo: true } job) return;
+        try { workspace!.Undo(job, Jobs); UpdateControls(); SetStatus("Đã hoàn tác " + job.Name); }
+        catch (Exception ex) { SetStatus(ex.Message); }
+    }
+    private void RemoveJob(object sender, RoutedEventArgs e)
+    {
+        if (previewOnly || Job(sender) is not { Busy: false } job || preparing || exporting || closing) return;
+        if (job.Current is { Exported: false } && MessageBox.Show(this, "Ảnh này chưa xuất. Bỏ khỏi bàn làm việc?", "PhotoTone", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        try { workspace!.Save(Jobs.Where(j => j != job)); Jobs.Remove(job); workspace.Prune(Jobs); UpdateControls(); }
+        catch (Exception ex) { SetStatus(ex.Message); }
+    }
+    private void CleanWorkspace(object sender, RoutedEventArgs e)
+    {
+        if (!CleanButton.IsEnabled) return;
+        if (Jobs.Any(j => j.Current is { Exported: false }) && MessageBox.Show(this, "Có kết quả chưa xuất. Xóa bàn làm việc?", "PhotoTone", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        try { workspace!.Save([]); Jobs.Clear(); workspace.Prune(Jobs); UpdateControls(); SetStatus(workspace.CleanupWarning ?? "Đã dọn bàn làm việc."); }
+        catch (Exception ex) { SetStatus(ex.Message); }
+    }
+    private async void ExportAll(object sender, RoutedEventArgs e)
+    {
+        if (!ExportButton.IsEnabled) return;
+        exportTask = ExportAsync(); await exportTask;
+    }
+    private async Task ExportAsync()
+    {
+        var snapshot = ExportService.Snapshot(Jobs); if (snapshot.Length == 0) return;
+        exporting = true; UpdateControls();
+        using var pin = workspace!.Pin(snapshot.Select(s => s.Version.Path));
+        try
+        {
+            var dialog = new ExportWindow(settings.Format) { Owner = this };
+            if (dialog.ShowDialog() != true) return;
+            var picker = new OpenFolderDialog { Title = "Xuất tất cả kết quả", InitialDirectory = Directory.Exists(settings.OutputDirectory) ? settings.OutputDirectory : "" };
+            if (picker.ShowDialog(this) != true) return;
+            settings.Format = dialog.Format; settings.OutputDirectory = picker.FolderName; AppFiles.SaveSettings(settings);
+            var outcomes = await Task.Run(() => ExportService.Export(snapshot, picker.FolderName, dialog.Format));
+            foreach (var outcome in outcomes.Where(o => o.Error is null)) outcome.Item.Version.Exported = true;
+            Persist(); foreach (var job in Jobs) job.RefreshResult();
+            var errors = outcomes.Where(o => o.Error is not null).ToArray();
+            SetStatus($"Đã xuất {outcomes.Length - errors.Length}/{outcomes.Length} ảnh" + (errors.Length > 0 ? " · " + errors[0].Error : " · " + picker.FolderName));
+        }
+        catch (Exception ex) { SetStatus(ex.Message); }
+        finally { pin.Dispose(); workspace.Prune(Jobs); exporting = false; UpdateControls(); }
+    }
+    private async void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (closing) { e.Cancel = true; return; }
+        if (runner.IsBusy || preparing || exporting || importing > 0)
+        {
+            e.Cancel = true; closing = true; lifetime.Cancel(); Stop(); UpdateControls();
+            await runner.WhenIdle; await exportTask;
+            while (preparing || importing > 0) await Task.Delay(50);
+            closing = false; Close(); return;
+        }
+        try { if (initialized) Persist(); }
+        catch (Exception ex)
+        {
+            e.Cancel = true;
+            if (lifetime.IsCancellationRequested) { lifetime.Dispose(); lifetime = new(); }
+            SetStatus(ex.Message); UpdateControls(); return;
+        }
+        workspace?.Dispose(); lifetime.Dispose(); importGate.Dispose(); client.Dispose();
+    }
+}
+
+internal sealed class ExportWindow : Window
+{
+    private readonly ComboBox format = new() { ItemsSource = new[] { "JPEG", "PNG" } };
+    public string Format => format.SelectedItem as string ?? "JPEG";
+    public ExportWindow(string selected)
+    {
+        Style = (Style)FindResource(typeof(Window));
+        Title = "Xuất tất cả"; Width = 280; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        var panel = new StackPanel { Margin = new Thickness(18) }; Content = panel;
+        panel.Children.Add(new TextBlock { Text = "Định dạng", Margin = new Thickness(0, 0, 0, 8) }); format.SelectedItem = selected; panel.Children.Add(format);
+        var button = new Button { Content = "Chọn thư mục", Margin = new Thickness(0, 12, 0, 0), Style = (Style)FindResource("Primary") }; button.Click += (_, _) => DialogResult = true; panel.Children.Add(button);
     }
 }

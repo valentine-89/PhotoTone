@@ -96,7 +96,7 @@ internal static class SelfTests
         });
         await Check("Provider size enums are honored and unknown sizes fail closed", () =>
         {
-            using var supported = JsonDocument.Parse("""{"size":{"type":"enum","values":["auto","3072x2048"]}}""");
+            using var supported = JsonDocument.Parse("""{"size":{"type":"enum","values":["auto","3072x2048"]},"input_references":{"type":"range","min":0,"max":2}}""");
             var native = options with { Model = new("test/fixed", "Fixed", supported.RootElement.Clone()), Resolution = "Gốc" };
             var body = OpenRouterClient.RequestBody(native, new(2560, 1709), "s", "r");
             Assert((string)body["size"] == "3072x2048", "Ignored provider allowlist");
@@ -160,7 +160,7 @@ internal static class SelfTests
             catch (HttpRequestException ex) { Assert(ex.Message.Contains("429"), "Missing HTTP status"); }
             Assert(errorHandler.Calls == 1, "Billable retry attempted");
         });
-        await Check("Model discovery filters text-only and single-reference models", async () =>
+        await Check("Model discovery filters text-only and accepts single-reference editing", async () =>
         {
             var item = new { id = "test/image", name = "Test", architecture = new { input_modalities = new[] { "image", "text" }, output_modalities = new[] { "image" } }, supported_parameters = model.Parameters };
             var eligible = JsonNode.Parse(JsonSerializer.Serialize(item))!;
@@ -168,39 +168,41 @@ internal static class SelfTests
             var oneReference = eligible.DeepClone(); oneReference["id"] = "test/one-reference"; oneReference["supported_parameters"]!["input_references"]!["max"] = 1;
             var payload = new JsonObject { ["data"] = new JsonArray(eligible, textOnly, oneReference) }.ToJsonString();
             using var client = new OpenRouterClient(new FakeHandler(_ => new(HttpStatusCode.OK) { Content = new StringContent(payload) }));
-            var found = await client.ModelsAsync(options.ApiBase, CancellationToken.None); Assert(found.Count == 1 && found[0].Supports("resolution"), "Model parse");
+            var found = await client.ModelsAsync(options.ApiBase, CancellationToken.None); Assert(found.Count == 2 && found[0].Supports("resolution"), "Model parse");
         });
-        await Check("Concurrent batch handles same filename safely and records costs", async () =>
+        await Check("Concurrent queue uses separate API requests and records costs", async () =>
         {
             var handler = new FakeHandler(_ => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { data = new[] { new { b64_json = Convert.ToBase64String(asset) } }, usage = new { cost = .04 } })) });
             using var client = new OpenRouterClient(handler);
             var jobs = Enumerable.Range(0, 3).Select(_ => new PhotoJob { SourcePath = sourcePath, Width = 2560, Height = 1709 }).ToArray();
-            var updates = new System.Collections.Concurrent.ConcurrentBag<JobUpdate>();
-            await Task.Run(() => new BatchRunner(client).RunAsync(jobs, options, new InlineProgress(updates.Add), CancellationToken.None));
-            var done = updates.Where(u => u.State == "Hoàn tất").ToArray();
-            Assert(done.Length == 3, string.Join(" | ", updates.Where(u => u.State == "Lỗi").Select(u => u.Detail)));
-            Assert(done.Select(d => d.OutputPath).Distinct().Count() == 3, "Output collision");
+            var done = new List<ImageResult>(); var errors = new List<Exception>();
+            var queue = new BatchRunner(async (item, token) => done.Add(await client.EditAsync(item.Options, new(2560, 1709), "s", "r", token))) { Concurrency = 2 };
+            queue.Failed += (_, ex) => errors.Add(ex);
+            queue.Enqueue(jobs.Select(j => new WorkItem(j, options, null, sourcePath, FileStamp.Read(sourcePath), null)).ToArray());
+            await queue.WhenIdle;
+            Assert(done.Count == 3 && errors.Count == 0, "Queue did not finish");
             Assert(handler.MaxActive <= 2 && handler.Calls == 3, "Concurrency exceeded");
             Assert(done.All(d => d.Cost == .04m), "Missing cost");
         });
         await Check("Cancellation stops queued requests", async () =>
         {
-            using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
             var handler = new FakeHandler(_ => new(HttpStatusCode.OK)); using var client = new OpenRouterClient(handler);
             var jobs = Enumerable.Range(0, 3).Select(_ => new PhotoJob { SourcePath = sourcePath, Width = 2560, Height = 1709 }).ToArray();
-            var updates = new System.Collections.Concurrent.ConcurrentBag<JobUpdate>();
-            await Task.Run(() => new BatchRunner(client).RunAsync(jobs, options, new InlineProgress(updates.Add), cancellation.Token));
-            Assert(handler.Calls == 0 && updates.Count(u => u.State == "Đã dừng") == 3, "Cancelled queue sent requests");
+            int cancelled = 0;
+            var queue = new BatchRunner(async (item, token) => await client.EditAsync(item.Options, new(2560, 1709), "s", "r", token));
+            queue.Failed += (_, ex) => { if (ex is OperationCanceledException) cancelled++; };
+            queue.Enqueue(jobs.Select(j => new WorkItem(j, options, null, sourcePath, FileStamp.Read(sourcePath), null)).ToArray());
+            cancelled += queue.Stop().Length; await queue.WhenIdle;
+            Assert(handler.Calls == 0 && cancelled == 3, "Cancelled queue sent requests");
         });
+        await WorkspaceTests.RunAsync(root, options, Check);
         var json = JsonSerializer.Serialize(checks); using var checkDoc = JsonDocument.Parse(json);
         int failed = checkDoc.RootElement.EnumerateArray().Count(item => !item.GetProperty("passed").GetBoolean());
         AppFiles.AtomicJson(reportPath, new { total = checks.Count, passed = checks.Count - failed, failed, checks });
         // Delete only this run's enumerated files, then remove its now-empty directory.
-        foreach (var path in Directory.GetFiles(root)) File.Delete(path);
-        Directory.Delete(root, false);
+        WorkspaceTests.DeleteTestTree(root);
         return failed == 0 ? 0 : 1;
     }
-    private sealed class InlineProgress(Action<JobUpdate> action) : IProgress<JobUpdate> { public void Report(JobUpdate value) => action(value); }
     private sealed class FakeHandler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {
         public int Calls; public int MaxActive; private int active;

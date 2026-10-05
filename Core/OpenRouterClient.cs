@@ -35,7 +35,7 @@ public sealed class OpenRouterClient : IDisposable
                 && architecture.GetProperty("output_modalities").EnumerateArray().Any(v => v.GetString() == "image")
                 && item.TryGetProperty("supported_parameters", out var parameters)
                 && parameters.TryGetProperty("input_references", out var references)
-                && references.TryGetProperty("max", out var max) && max.GetInt32() >= 2)
+                && references.TryGetProperty("max", out var max) && max.GetInt32() >= 1)
             .Select(item => new ImageModel(item.GetProperty("id").GetString()!, item.GetProperty("name").GetString()!, item.GetProperty("supported_parameters").Clone()))
             .OrderBy(item => item.Id).ToArray();
     }
@@ -51,18 +51,17 @@ public sealed class OpenRouterClient : IDisposable
         return supported[0].Label;
     }
     public static Dictionary<string, object> RequestBody(BatchOptions options, ImageSize size, string source, string reference)
+        => RequestBody(options, size, new PreparedEdit(options.Prompt + "\nẢnh 1 là ảnh cần chỉnh. Ảnh 2 chỉ là mẫu màu/ánh sáng. Giữ nguyên cảnh vật.", [new(source, "Ảnh chính"), new(reference, "Ảnh mẫu")]));
+    public static Dictionary<string, object> RequestBody(BatchOptions options, ImageSize size, PreparedEdit edit)
     {
         var plan = ResolutionPlan.Create(options.Model, options.Resolution, size);
+        ValidateReferences(options.Model, edit.Images.Count);
         var body = new Dictionary<string, object>
         {
             ["model"] = options.Model.Id,
-            ["prompt"] = options.Prompt + $"\n\nYÊU CẦU FILE NÀY: ảnh 1 là ảnh cần chỉnh ({size.Width}x{size.Height}); ảnh 2 chỉ là mẫu màu/ánh sáng. Đầu ra phải cùng tỷ lệ và ít nhất {size.Width}x{size.Height} pixel. Giữ nguyên cảnh vật. Trả đúng một ảnh.",
+            ["prompt"] = edit.Prompt + $"\n\nĐầu ra phải cùng tỷ lệ và ít nhất {size.Width}x{size.Height} pixel. Trả đúng một ảnh hoàn chỉnh, không trả ảnh hướng dẫn, không vẽ box/nhãn lên kết quả.",
             ["n"] = 1,
-            ["input_references"] = new[]
-            {
-                new { type = "image_url", image_url = new { url = source } },
-                new { type = "image_url", image_url = new { url = reference } }
-            },
+            ["input_references"] = edit.Images.Select(i => new { type = "image_url", image_url = new { url = i.DataUrl } }).ToArray(),
             ["provider"] = new { allow_fallbacks = false }
         };
         body[plan.Parameter] = plan.Value;
@@ -70,12 +69,18 @@ public sealed class OpenRouterClient : IDisposable
         if (options.Model.Values("quality").Contains("high")) body["quality"] = "high";
         return body;
     }
+    public static void ValidateReferences(ImageModel model, int count)
+    {
+        if (count < Math.Max(1, model.MinReferences) || count > model.MaxReferences) throw new InvalidOperationException($"Cần {count} ảnh đầu vào; {model.Id} nhận {Math.Max(1, model.MinReferences)}–{model.MaxReferences} ảnh.");
+    }
     public async Task<ImageResult> EditAsync(BatchOptions options, ImageSize size, string source, string reference, CancellationToken token)
+        => await EditAsync(options, size, new PreparedEdit(options.Prompt + "\nẢnh 1 là ảnh cần chỉnh. Ảnh 2 chỉ là mẫu màu/ánh sáng. Giữ nguyên cảnh vật.", [new(source, "Ảnh chính"), new(reference, "Ảnh mẫu")]), token);
+    public async Task<ImageResult> EditAsync(BatchOptions options, ImageSize size, PreparedEdit edit, CancellationToken token)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, Endpoint(options.ApiBase, "images"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.Key.Trim());
         request.Headers.Add("X-Title", "PhotoTone");
-        request.Content = new StringContent(JsonSerializer.Serialize(RequestBody(options, size, source, reference)), Encoding.UTF8, "application/json");
+        request.Content = new StringContent(JsonSerializer.Serialize(RequestBody(options, size, edit)), Encoding.UTF8, "application/json");
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
         var text = await ReadBounded(response.Content, MaxResponseBytes, token);
         if (!response.IsSuccessStatusCode) throw ApiError(response, text, options.Key);

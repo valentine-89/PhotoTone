@@ -80,7 +80,10 @@ public static class ImageFiles
     public static string DataUrl(string path)
     {
         // Normalize orientation without changing the native pixel dimensions. Strip EXIF from outbound pixels.
-        var source = Load(path);
+        return DataUrl(Load(path));
+    }
+    public static string DataUrl(BitmapSource source)
+    {
         using var stream = new MemoryStream();
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(SrgbFrame(source)); encoder.Save(stream);
         if (stream.Length > MaxFileBytes) throw new InvalidDataException("Ảnh PNG gửi đi vượt 40 MB. Không tự giảm độ phân giải.");
@@ -109,7 +112,7 @@ public static class ImageFiles
             int y = Math.Max(0, (resized.PixelHeight - expected.Height) / 2);
             final = new CroppedBitmap(resized, new Int32Rect(x, y, expected.Width, expected.Height)); final.Freeze();
         }
-        var temporary = output + ".partial";
+        var temporary = output + "." + Guid.NewGuid().ToString("N") + ".partial";
         try
         {
             BitmapEncoder encoder = format == "PNG" ? new PngBitmapEncoder() : new JpegBitmapEncoder { QualityLevel = 96 };

@@ -49,16 +49,7 @@ public partial class App : Application
                     await Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
                     try
                     {
-                        window.UpdateLayout();
-                        var content = (FrameworkElement)window.Content;
-                        var rendered = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
-                        var surface = new DrawingVisual();
-                        using (var drawing = surface.RenderOpen()) { drawing.DrawRectangle(window.Background, null, new Rect(0, 0, content.ActualWidth, content.ActualHeight)); drawing.DrawRectangle(new VisualBrush(content), null, new Rect(0, 0, content.ActualWidth, content.ActualHeight)); }
-                        rendered.Render(surface);
-                        var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(rendered));
-                        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(e.Args[1]))!);
-                        using (var stream = File.Create(e.Args[1])) png.Save(stream);
-                        File.WriteAllText(e.Args[1] + ".json", System.Text.Json.JsonSerializer.Serialize(new { loaded = true, width = window.ActualWidth, height = window.ActualHeight, samples = window.Jobs.Count }));
+                        await Tests.UiSmoke.RunAsync(window, e.Args[1]);
                         window.Close();
                     }
                     catch (Exception ex) { File.WriteAllText(e.Args[1] + ".error.txt", ex.ToString()); Shutdown(1); }
@@ -68,6 +59,10 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
+            if (e.Args.Length >= 2 && e.Args[0] == "--smoke-test")
+            {
+                File.WriteAllText(e.Args[1] + ".error.txt", ex.ToString()); Shutdown(1); return;
+            }
             Directory.CreateDirectory(Core.AppFiles.Root);
             File.WriteAllText(Path.Combine(Core.AppFiles.Root, "startup-error.txt"), ex.ToString());
             MessageBox.Show(ex.Message, "PhotoTone", MessageBoxButton.OK, MessageBoxImage.Error);

@@ -13,6 +13,8 @@ public sealed record ResolutionPlan(string Parameter, string Value, string? Aspe
         {
             if (!model.Values("resolution").Contains(selection))
                 throw new InvalidOperationException($"{model.Id} không hỗ trợ {selection}. Chọn độ phân giải được liệt kê hoặc model có 4K.");
+            if (TierEdges.TryGetValue(selection, out var edge) && edge < Math.Max(original.Width, original.Height))
+                throw new InvalidOperationException($"{selection} không đủ cho ảnh {original}. Chọn độ phân giải lớn hơn hoặc Gốc.");
             return new("resolution", selection, OpenRouterClient.ClosestAspect(original, model.Values("aspect_ratio")));
         }
 

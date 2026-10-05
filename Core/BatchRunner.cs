@@ -1,65 +1,64 @@
-using System.IO;
-using System.Security.Cryptography;
-using System.Text;
-
 namespace PhotoTone.Core;
 
-public sealed record JobUpdate(PhotoJob Job, string State, string Detail = "", string? OutputPath = null, decimal? Cost = null);
-public sealed class BatchRunner(OpenRouterClient client)
+// Called on the UI dispatcher: one FIFO shared by initial processing and refinements.
+public sealed class BatchRunner(Func<WorkItem, CancellationToken, Task> execute)
 {
-    public async Task RunAsync(IReadOnlyList<PhotoJob> jobs, BatchOptions options, IProgress<JobUpdate> progress, CancellationToken token)
+    private readonly Queue<WorkItem> pending = new();
+    private readonly HashSet<string> reserved = new();
+    private CancellationTokenSource cancellation = new();
+    private TaskCompletionSource idle = Completed();
+    public int Concurrency { get; set; } = 1;
+    public int Active { get; private set; }
+    public int Pending => pending.Count;
+    public bool IsBusy => Active + Pending > 0;
+    public bool Stopping { get; private set; }
+    public int Finished { get; private set; }
+    public int Total { get; private set; }
+    public Task WhenIdle => idle.Task;
+    public event Action? Changed;
+    public event Action<WorkItem, Exception>? Failed;
+    private static TaskCompletionSource Completed() { var value = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); value.SetResult(); return value; }
+    public bool Contains(string id) => reserved.Contains(id);
+    public void Enqueue(IReadOnlyList<WorkItem> items)
     {
-        Directory.CreateDirectory(options.OutputDirectory);
-        // Full-resolution reference encoded once per batch; never substitute the UI thumbnail.
-        var reference = ImageFiles.DataUrl(options.ReferencePath);
-        using var gate = new SemaphoreSlim(Math.Clamp(options.Concurrency, 1, 4));
-        var batchId = DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6];
-        var receipts = new System.Collections.Concurrent.ConcurrentBag<object>();
-        await Task.WhenAll(jobs.Select(async job =>
+        if (Stopping) throw new InvalidOperationException("Đang dừng hàng đợi.");
+        if (items.Select(i => i.Job.Id).Distinct().Count() != items.Count || items.Any(i => reserved.Contains(i.Job.Id)))
+            throw new InvalidOperationException("Ảnh đã có lượt xử lý trong hàng đợi.");
+        if (items.Count == 0) return;
+        if (!IsBusy)
         {
-            bool entered = false;
-            decimal? charged = null;
-            try
-            {
-                await gate.WaitAsync(token); entered = true;
-                token.ThrowIfCancellationRequested();
-                progress.Report(new(job, "Đang gửi", ""));
-                var size = ImageFiles.Size(job.SourcePath);
-                var source = ImageFiles.DataUrl(job.SourcePath);
-                progress.Report(new(job, "AI đang xử lý", ""));
-                var result = await client.EditAsync(options, size, source, reference, token);
-                charged = result.Cost;
-                token.ThrowIfCancellationRequested();
-                progress.Report(new(job, "Kiểm tra pixel", "", Cost: charged));
-                var fileName = Path.GetFileNameWithoutExtension(job.SourcePath) + "_edited_" + batchId + "_" + job.Id[..6] + (options.Format == "PNG" ? ".png" : ".jpg");
-                var output = Path.Combine(options.OutputDirectory, fileName);
-                var providerSize = ImageFiles.Export(result.Bytes, size, output, options.Format);
-                var receipt = new
-                {
-                    source = job.SourcePath, output, original = size, provider = providerSize, exported = ImageFiles.Size(output),
-                    model = result.Model, resolution = options.Resolution, requestId = result.RequestId,
-                    prompt = options.Prompt, promptHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(options.Prompt))),
-                    reference = options.ReferencePath, sourceSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(job.SourcePath))),
-                    costUsd = result.Cost, completedUtc = DateTimeOffset.UtcNow, status = "completed"
-                };
-                AppFiles.AtomicJson(Path.ChangeExtension(output, ".json"), receipt);
-                receipts.Add(receipt);
-                progress.Report(new(job, "Hoàn tất", $"Gốc {size} · Model {providerSize} · Xuất {size}", output, charged));
-            }
-            catch (OperationCanceledException)
-            {
-                var state = token.IsCancellationRequested ? "Đã dừng" : "Hết thời gian";
-                var detail = token.IsCancellationRequested ? "Đã hủy yêu cầu phía app; kiểm tra chi phí trên nhà cung cấp." : "Yêu cầu quá 12 phút. Không tự gửi lại để tránh tính phí trùng.";
-                receipts.Add(new { source = job.SourcePath, status = state, detail, costUsd = charged });
-                progress.Report(new(job, state, detail, Cost: charged));
-            }
-            catch (Exception ex)
-            {
-                receipts.Add(new { source = job.SourcePath, status = "failed", detail = ex.Message, costUsd = charged });
-                progress.Report(new(job, "Lỗi", ex.Message, Cost: charged));
-            }
-            finally { if (entered) gate.Release(); }
-        }));
-        AppFiles.AtomicJson(Path.Combine(options.OutputDirectory, "batch_" + batchId + ".json"), new { batchId, model = options.Model.Id, jobs = receipts.ToArray() });
+            cancellation.Dispose(); cancellation = new(); Finished = Total = 0;
+            idle = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        foreach (var item in items) { reserved.Add(item.Job.Id); pending.Enqueue(item); Total++; }
+        Pump();
+    }
+    private void Pump()
+    {
+        while (!Stopping && Active < Math.Clamp(Concurrency, 1, 4) && pending.TryDequeue(out var item))
+        {
+            Active++; _ = RunOne(item, cancellation.Token);
+        }
+        Changed?.Invoke();
+    }
+    private async Task RunOne(WorkItem item, CancellationToken token)
+    {
+        await Task.Yield();
+        try { token.ThrowIfCancellationRequested(); await execute(item, token); }
+        catch (Exception ex) { Failed?.Invoke(item, ex); }
+        finally
+        {
+            Active--; Finished++; reserved.Remove(item.Job.Id);
+            if (!IsBusy) { Stopping = false; idle.TrySetResult(); }
+            Pump();
+        }
+    }
+    public WorkItem[] Stop()
+    {
+        Stopping = true; cancellation.Cancel();
+        var removed = pending.ToArray(); pending.Clear();
+        foreach (var item in removed) { reserved.Remove(item.Job.Id); Finished++; }
+        if (!IsBusy) { Stopping = false; idle.TrySetResult(); }
+        Changed?.Invoke(); return removed;
     }
 }
