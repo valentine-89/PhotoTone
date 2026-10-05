@@ -1,0 +1,26 @@
+Hãy chỉnh ảnh nội thất đầu vào theo phong cách của ảnh mẫu hoàn thiện.
+
+VAI TRÒ ẢNH
+Ảnh 1: ảnh cần xử lý, phải giữ nguyên cảnh vật và góc chụp.
+Ảnh 2: ảnh mẫu hoàn thiện; chỉ tham khảo độ sáng, cân bằng trắng, màu sắc và cảm giác vật liệu, không sao chép đồ vật hoặc bố cục.
+
+MỤC TIÊU
+Ảnh sáng, sạch, tự nhiên, có chiều sâu như ảnh mẫu. Tường và trần trắng trung tính hơi ấm; gỗ giữ màu nâu ấm và rõ vân; đá, kim loại, kính và vải giữ đúng đặc tính vật liệu. Điều chỉnh riêng từng ảnh để đồng nhất phong cách, không áp thông số cố định.
+
+ÁNH SÁNG
+Nâng sáng tổng thể và mở vùng tối để nhìn rõ nội thất. Giữ điểm đen, bóng đổ và chiều sâu tự nhiên; không biến vật liệu đen thành xám, không làm ảnh phẳng hoặc HDR quá mức. Giữ chuyển sắc mềm trên tường và trần.
+
+CÂN BẰNG TRẮNG VÀ MÀU
+Dựa vào những bề mặt vốn trắng/xám trung tính, không mặc định mọi bề mặt sáng là trắng tinh. Loại bỏ ám vàng, xanh, lục hoặc tím ngoài ý muốn. Giữ sắc ấm tự nhiên của đèn và gỗ. Không ép các vật liệu khác nhau về cùng màu với vật liệu trong ảnh mẫu.
+
+VÙNG SÁNG VÀ LỆCH MÀU CỤC BỘ
+Xử lý riêng vùng gần cửa sổ, dưới đèn, trên trần, tường và mặt tủ khi chênh sáng hoặc pha trộn ánh sáng nóng/lạnh. Dùng vùng chuyển tiếp mềm, tránh quầng sáng, viền mask và mảng màu đứt đoạn. Giữ phản xạ tự nhiên của kính, đá và kim loại. Giảm chói trong khả năng dữ liệu gốc, không tạo chi tiết giả ở vùng đã cháy trắng.
+
+CANH LINE
+Sửa nghiêng máy và méo phối cảnh nhẹ. Ưu tiên cạnh đứng của tường, cửa, tủ thẳng đứng; giữ tỷ lệ đồ vật và căn phòng. Chỉ cân ngang đường thực sự cần nằm ngang. Giữ đường hội tụ theo chiều sâu; không ép mọi cạnh bàn, trần và sàn thành đường ngang. Crop tối thiểu, tránh mất chi tiết quan trọng.
+
+CHI TIẾT VÀ TÍNH TRUNG THỰC
+Giảm nhiễu nhẹ, tăng nét vừa đủ, giữ vân gỗ và chất liệu. Giữ nguyên mọi đồ vật, chữ, hoa văn, kết cấu và bố cục thực tế. Không thêm, xóa, thay thế, di chuyển vật thể hoặc tái thiết kế căn phòng. Không làm bệt, không tạo viền sắc, không tạo chi tiết mới.
+
+ĐỘ PHÂN GIẢI
+Xử lý trực tiếp từ ảnh gốc đủ độ phân giải. Đầu ra phải có cả chiều rộng và chiều cao ít nhất bằng ảnh gốc, giữ cùng tỷ lệ khung hình. Không giảm kích thước rồi phóng lớn bù. Xuất đúng một ảnh hoàn thiện, không ghép ảnh trước/sau, không chữ, không viền.
