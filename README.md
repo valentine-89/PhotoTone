@@ -51,3 +51,7 @@ pwsh -File .\scripts\build.ps1 -Publish
 - [Danh sách model và khả năng hiện hành](https://openrouter.ai/api/v1/images/models)
 
 Danh sách model được tải từ API mỗi khi người dùng yêu cầu hoặc bắt đầu một batch chưa có danh sách. Không hardcode model dự phòng.
+
+## Giấy phép
+
+[MIT License](LICENSE) — Copyright (c) 2026 valentine-89.
