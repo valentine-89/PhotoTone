@@ -22,12 +22,15 @@ public partial class MainWindow : Window
     private string referencePath;
     private string credentialEndpoint;
     private bool closeAfterCancel;
+    private readonly bool previewOnly;
 
-    public MainWindow()
+    public MainWindow(bool previewOnly = false)
     {
+        this.previewOnly = previewOnly;
         InitializeComponent();
         AppFiles.Initialize();
-        settings = AppFiles.LoadSettings();
+        settings = previewOnly ? new Settings { ReferencePath = Path.Combine(AppFiles.Samples, "ok.jpg"), Prompt = AppFiles.DefaultPrompt,
+            OutputDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "PhotoTone") } : AppFiles.LoadSettings();
         referencePath = settings.ReferencePath;
         credentialEndpoint = settings.ApiBase.TrimEnd('/');
         ApiBaseBox.Text = settings.ApiBase;
@@ -164,18 +167,19 @@ public partial class MainWindow : Window
         if (ResolutionBox is null || ModelBox.SelectedItem is not ImageModel model) return;
         var selected = ResolutionBox.SelectedItem as string ?? settings?.Resolution ?? "4K";
         var choices = new[] { "Gốc" }.Concat(model.Values("resolution")).Distinct().ToList();
-        // Keep an explicit previous selection visible; preflight reports unsupported values instead of silently downgrading.
-        if (!choices.Contains(selected)) choices.Add(selected);
-        ResolutionBox.ItemsSource = choices; ResolutionBox.SelectedItem = selected;
+        ResolutionBox.ItemsSource = choices;
+        ResolutionBox.SelectedItem = choices.Contains(selected) ? selected : null;
+        if (ResolutionBox.SelectedItem is null) SetStatus($"{model.Id} không hỗ trợ {selected}. Chọn lại độ phân giải; app không tự đổi model.");
     }
     private void CaptureSettings()
     {
+        if (previewOnly) return;
         OpenRouterClient.Endpoint(ApiBaseBox.Text, "images");
         settings.ApiBase = ApiBaseBox.Text.Trim().TrimEnd('/');
         settings.Model = ModelBox.Text.Trim();
         settings.KeyEndpoint = settings.ApiBase;
         settings.EncryptedKey = SecretStore.Protect(KeyBox.Password.Trim());
-        settings.Resolution = ResolutionBox.SelectedItem as string ?? "4K";
+        settings.Resolution = ResolutionBox.SelectedItem as string ?? settings.Resolution;
         settings.Concurrency = ConcurrencyBox.SelectedItem is int number ? number : 1;
         settings.Format = FormatBox.SelectedItem as string ?? "JPEG";
         settings.ReferencePath = referencePath; settings.Prompt = PromptBox.Text; settings.OutputDirectory = OutputBox.Text.Trim();
@@ -203,15 +207,26 @@ public partial class MainWindow : Window
         {
             if (models.Count == 0) await LoadModelsAsync();
             var model = models.FirstOrDefault(m => m.Id == ModelBox.Text.Trim()) ?? throw new InvalidOperationException("Model chưa có trong danh sách Image API. Chọn model và tải lại danh sách.");
+            if (ResolutionBox.SelectedItem is not string) throw new InvalidOperationException("Chọn độ phân giải phù hợp với model.");
             CaptureSettings();
             if (!Path.IsPathFullyQualified(settings.OutputDirectory)) throw new InvalidOperationException("Thư mục xuất phải là đường dẫn đầy đủ.");
             var options = new BatchOptions(settings.ApiBase, KeyBox.Password.Trim(), model, settings.Resolution, settings.Concurrency,
                 settings.Format, referencePath, settings.Prompt, settings.OutputDirectory);
+            int blocked = 0;
             foreach (var job in selected)
             {
-                OpenRouterClient.RequestBody(options, new(job.Width, job.Height), "", ""); // capability preflight, no billable request
-                job.State = "Trong hàng đợi"; job.Detail = ""; job.Cost = null;
+                try
+                {
+                    OpenRouterClient.RequestBody(options, new(job.Width, job.Height), "", "");
+                    job.State = "Sẵn sàng"; job.Detail = "";
+                }
+                catch (InvalidOperationException ex)
+                {
+                    job.State = "Không đủ độ phân giải"; job.Detail = ex.Message; blocked++;
+                }
             }
+            if (blocked > 0) { SetStatus($"{blocked} ảnh chưa phù hợp với model/độ phân giải đã chọn. Chưa gửi ảnh nào tới API."); return; }
+            foreach (var job in selected) { job.State = "Trong hàng đợi"; job.Cost = null; }
             int finished = 0;
             var progress = new Progress<JobUpdate>(update =>
             {

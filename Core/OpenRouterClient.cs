@@ -52,6 +52,7 @@ public sealed class OpenRouterClient : IDisposable
     }
     public static Dictionary<string, object> RequestBody(BatchOptions options, ImageSize size, string source, string reference)
     {
+        var plan = ResolutionPlan.Create(options.Model, options.Resolution, size);
         var body = new Dictionary<string, object>
         {
             ["model"] = options.Model.Id,
@@ -64,14 +65,8 @@ public sealed class OpenRouterClient : IDisposable
             },
             ["provider"] = new { allow_fallbacks = false }
         };
-        if (options.Resolution == "Gốc") body["size"] = $"{size.Width}x{size.Height}";
-        else
-        {
-            if (!options.Model.Values("resolution").Contains(options.Resolution))
-                throw new InvalidOperationException($"Model không hỗ trợ {options.Resolution}. Hãy chọn lại độ phân giải/model; app không tự hạ xuống.");
-            body["resolution"] = options.Resolution;
-            body["aspect_ratio"] = ClosestAspect(size, options.Model.Values("aspect_ratio"));
-        }
+        body[plan.Parameter] = plan.Value;
+        if (plan.AspectRatio is not null) body["aspect_ratio"] = plan.AspectRatio;
         if (options.Model.Values("quality").Contains("high")) body["quality"] = "high";
         return body;
     }

@@ -1,4 +1,4 @@
-<Window x:Class="PhotoTone.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="PhotoTone · 1.0.0" Style="{StaticResource {x:Type Window}}" Width="1460" Height="900" MinWidth="1200" MinHeight="720" WindowStartupLocation="CenterScreen" AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver" Closing="OnClosing">
+<Window x:Class="PhotoTone.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="PhotoTone · 1.0.1" Style="{StaticResource {x:Type Window}}" Width="1460" Height="900" MinWidth="1200" MinHeight="720" WindowStartupLocation="CenterScreen" AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver" Closing="OnClosing">
   <Grid Margin="18">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <DockPanel Margin="0,0,0,16">

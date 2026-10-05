@@ -67,11 +67,40 @@ internal static class SelfTests
             Assert(!body.GetProperty("provider").GetProperty("allow_fallbacks").GetBoolean(), "Fallback enabled");
             return Task.CompletedTask;
         });
-        await Check("Exact-size request contains no conflicting tier or aspect", () =>
+        await Check("Native export uses a supported 4K tier, never arbitrary original size", () =>
         {
             var body = OpenRouterClient.RequestBody(options with { Resolution = "Gốc" }, new(2560, 1709), "s", "r");
-            Assert((string)body["size"] == "2560x1709" && !body.ContainsKey("resolution") && !body.ContainsKey("aspect_ratio"), "Conflicting size settings");
+            Assert((string)body["resolution"] == "4K" && (string)body["aspect_ratio"] == "3:2" && !body.ContainsKey("size"), "Sent unsupported original size");
             Reject(() => OpenRouterClient.RequestBody(options with { Resolution = "8K" }, new(2560, 1709), "s", "r"), "không hỗ trợ");
+            return Task.CompletedTask;
+        });
+        using var fixedModelDoc = JsonDocument.Parse("""{"aspect_ratio":{"type":"enum","values":["1:1","3:2","2:3","auto"]},"input_references":{"type":"range","min":0,"max":16}}""");
+        var fixedModel = new ImageModel("openai/gpt-5-image", "GPT-5 Image", fixedModelDoc.RootElement.Clone());
+        await Check("Regression: GPT-5 Image rejects 2560x1709 before any HTTP request", async () =>
+        {
+            var handler = new FakeHandler(_ => new(HttpStatusCode.BadRequest));
+            using var client = new OpenRouterClient(handler);
+            try
+            {
+                await client.EditAsync(options with { Model = fixedModel, Resolution = "Gốc" }, new(2560, 1709), "s", "r", CancellationToken.None);
+                throw new Exception("Unsupported size was not blocked");
+            }
+            catch (InvalidOperationException ex) { Assert(ex.Message.Contains("1536x1024") && ex.Message.Contains("4K"), "Missing actionable size limits"); }
+            Assert(handler.Calls == 0, "Sent rejected size to API");
+        });
+        await Check("Fixed-size model accepts smaller source using exact allowlisted size", () =>
+        {
+            var body = OpenRouterClient.RequestBody(options with { Model = fixedModel, Resolution = "Gốc" }, new(1024, 683), "s", "r");
+            Assert((string)body["size"] == "1536x1024" && !body.ContainsKey("resolution") && !body.ContainsKey("aspect_ratio"), "Not an allowed fixed size");
+            return Task.CompletedTask;
+        });
+        await Check("Provider size enums are honored and unknown sizes fail closed", () =>
+        {
+            using var supported = JsonDocument.Parse("""{"size":{"type":"enum","values":["auto","3072x2048"]}}""");
+            var native = options with { Model = new("test/fixed", "Fixed", supported.RootElement.Clone()), Resolution = "Gốc" };
+            var body = OpenRouterClient.RequestBody(native, new(2560, 1709), "s", "r");
+            Assert((string)body["size"] == "3072x2048", "Ignored provider allowlist");
+            Reject(() => OpenRouterClient.RequestBody(options with { Model = new("test/unknown", "Unknown", fixedModel.Parameters), Resolution = "Gốc" }, new(2560, 1709), "s", "r"), "không công bố");
             return Task.CompletedTask;
         });
         await Check("HTTPS endpoint validation", () =>

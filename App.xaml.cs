@@ -25,7 +25,13 @@ public partial class App : Application
                 var models = await client.ModelsAsync("https://openrouter.ai/api/v1", timeout.Token);
                 var selected = models.First(m => m.Id == "google/gemini-3.1-flash-image");
                 Core.OpenRouterClient.RequestBody(new("https://openrouter.ai/api/v1", "", selected, "4K", 1, "JPEG", "", "", ""), new(2560, 1709), "", "");
-                Core.AppFiles.AtomicJson(e.Args[1], new { liveCatalog = true, modelCount = models.Count, defaultModel = selected.Id, resolutions = selected.Values("resolution"), billableRequests = 0 });
+                var nativePlan = Core.ResolutionPlan.Create(selected, "Gốc", new(2560, 1709));
+                bool fixedSizeRejected = false;
+                var fixedModel = models.First(m => m.Id == "openai/gpt-5-image");
+                try { Core.ResolutionPlan.Create(fixedModel, "Gốc", new(2560, 1709)); }
+                catch (InvalidOperationException) { fixedSizeRejected = true; }
+                if (nativePlan.Value != "4K" || !fixedSizeRejected) throw new InvalidOperationException("Live size capability check failed.");
+                Core.AppFiles.AtomicJson(e.Args[1], new { liveCatalog = true, modelCount = models.Count, defaultModel = selected.Id, resolutions = selected.Values("resolution"), nativePlan, fixedSizeRejected, billableRequests = 0 });
                 Shutdown(0);
             }
             catch (Exception ex) { Core.AppFiles.AtomicJson(e.Args[1], new { error = ex.Message }); Shutdown(1); }
@@ -33,7 +39,7 @@ public partial class App : Application
         }
         try
         {
-            var window = new MainWindow(); MainWindow = window;
+            var window = new MainWindow(previewOnly: e.Args.Length >= 2 && e.Args[0] == "--smoke-test"); MainWindow = window;
             if (e.Args.Length >= 2 && e.Args[0] == "--smoke-test")
             {
                 window.ShowActivated = false; window.Left = -10000; window.Top = -10000;

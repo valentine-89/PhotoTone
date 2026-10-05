@@ -22,7 +22,9 @@ Dữ liệu mẫu được trích xuất một lần vào `%LOCALAPPDATA%\PhotoT
 
 ## Cam kết kích thước và giới hạn
 
-App gửi ảnh gốc ở độ phân giải đầy đủ (chuẩn hóa hướng EXIF, chuyển profile màu sang sRGB và mã hóa PNG), không dùng thumbnail của giao diện làm đầu vào AI. Mặc định yêu cầu 4K; lựa chọn **Gốc** gửi `size=WIDTHxHEIGHT` nếu nhà cung cấp hỗ trợ. App kiểm tra nội dung file thực trả về, không tin kích thước trong prompt. JPEG/PNG xuất có profile sRGB.
+App gửi ảnh gốc ở độ phân giải đầy đủ (chuẩn hóa hướng EXIF, chuyển profile màu sang sRGB và mã hóa PNG), không dùng thumbnail của giao diện làm đầu vào AI. Mặc định yêu cầu 4K. Lựa chọn **Gốc** chọn mức độ phân giải được model công bố đủ lớn cho ảnh nguồn (ví dụ 2560 × 1709 → 4K), hoặc kích thước cố định trong danh sách được phép. Không gửi tùy ý `size=2560x1709` tới model không hỗ trợ. App kiểm tra nội dung file thực trả về, không tin kích thước trong prompt. JPEG/PNG xuất có profile sRGB.
+
+`openai/gpt-5-image` trả về giới hạn 1024 × 1024, 1024 × 1536 và 1536 × 1024 trong phản hồi lỗi API được ghi nhận ngày 2026-10-05. Với ảnh 2560 × 1709, app sẽ chặn trước khi gọi API; hãy chọn model có 4K như `google/gemini-3.1-flash-image`. App không tự đổi model. Catalog của OpenRouter chưa công bố danh sách kích thước cố định của model này, nên app bổ sung giới hạn từ phản hồi đã kiểm chứng; model không công bố kích thước khác sẽ bị chặn thay vì đoán.
 
 - Kết quả có một chiều nhỏ hơn ảnh gốc: đánh dấu lỗi, không xuất và không phóng lớn bù.
 - Sai tỷ lệ khung hình trên 0,75%: đánh dấu lỗi. Sai khác nhỏ do chuẩn làm tròn của model được căn giữa/crop tối thiểu khi xuất.
