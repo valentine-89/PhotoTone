@@ -25,17 +25,31 @@ public static class AppFiles
     public static Stream Resource(string name) => Assembly.GetExecutingAssembly().GetManifestResourceStream($"PhotoTone.Assets.{name}")
         ?? throw new FileNotFoundException($"Thiếu dữ liệu nhúng: {name}");
     public static string DefaultPrompt { get { using var reader = new StreamReader(Resource("default-prompt.txt")); return reader.ReadToEnd(); } }
-    public static Settings LoadSettings()
+    public static Settings LoadSettings(string? path = null)
     {
-        var file = Path.Combine(Root, "settings.json");
+        var file = path ?? Path.Combine(Root, "settings.json");
         var settings = File.Exists(file) ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(file)) ?? new() : new Settings();
+        NormalizeEndpoint(settings);
         if (string.IsNullOrWhiteSpace(settings.Prompt)) settings.Prompt = DefaultPrompt;
         if (string.IsNullOrWhiteSpace(settings.ReferencePath)) settings.ReferencePath = Path.Combine(Samples, "ok.jpg");
         if (string.IsNullOrWhiteSpace(settings.OutputDirectory)) settings.OutputDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "PhotoTone");
         settings.Concurrency = Math.Clamp(settings.Concurrency, 1, 4);
         return settings;
     }
-    public static void SaveSettings(Settings settings) => AtomicJson(Path.Combine(Root, "settings.json"), settings);
+    private static void NormalizeEndpoint(Settings settings)
+    {
+        // Preserve old key provenance before replacing the configurable endpoint.
+        var origin = string.IsNullOrWhiteSpace(settings.KeyEndpoint) ? settings.ApiBase : settings.KeyEndpoint;
+        settings.KeyEndpoint = OpenRouterClient.IsOfficialBase(origin) ? OpenRouterClient.ApiBase : string.IsNullOrWhiteSpace(origin) ? "unrecognized" : origin;
+        settings.ApiBase = OpenRouterClient.ApiBase;
+    }
+    public static string LoadApiKey(Settings settings) => OpenRouterClient.IsOfficialBase(settings.KeyEndpoint)
+        ? SecretStore.Unprotect(settings.EncryptedKey) : "";
+    public static void SaveSettings(Settings settings, string? path = null)
+    {
+        NormalizeEndpoint(settings);
+        AtomicJson(path ?? Path.Combine(Root, "settings.json"), settings);
+    }
     public static void AtomicJson(string path, object value)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

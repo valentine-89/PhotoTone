@@ -8,6 +8,7 @@ namespace PhotoTone.Core;
 
 public sealed class OpenRouterClient : IDisposable
 {
+    public const string ApiBase = "https://openrouter.ai/api/v1";
     private readonly HttpClient http;
     private const long MaxResponseBytes = 90L * 1024 * 1024;
     public OpenRouterClient(HttpMessageHandler? handler = null)
@@ -17,11 +18,13 @@ public sealed class OpenRouterClient : IDisposable
     }
     public static Uri Endpoint(string apiBase, string relative)
     {
-        if (!Uri.TryCreate(apiBase.TrimEnd('/') + "/", UriKind.Absolute, out var uri) || uri.Scheme != "https"
-            || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
-            throw new ArgumentException("API URL phải dùng HTTPS, không chứa tài khoản, query hoặc fragment.");
-        return new Uri(uri, relative);
+        if (!IsOfficialBase(apiBase) || relative is not ("images" or "images/models"))
+            throw new ArgumentException("PhotoTone chỉ dùng API OpenRouter cố định: " + ApiBase);
+        return new Uri(ApiBase + "/" + relative);
     }
+    public static bool IsOfficialBase(string? value) => Uri.TryCreate(value?.Trim().TrimEnd('/'), UriKind.Absolute, out var uri)
+        && uri.Scheme == "https" && uri.Host == "openrouter.ai" && uri.IsDefaultPort && uri.AbsolutePath == "/api/v1"
+        && uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0;
     public async Task<IReadOnlyList<ImageModel>> ModelsAsync(string apiBase, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, Endpoint(apiBase, "images/models"));

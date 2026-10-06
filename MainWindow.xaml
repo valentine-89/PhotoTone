@@ -13,11 +13,16 @@
         <Button x:Name="ConfigButton" Content="Cấu hình" Click="Configure" Margin="0"/>
       </WrapPanel>
     </DockPanel>
-    <DockPanel Grid.Row="1" Margin="0,0,0,8">
+    <StackPanel Grid.Row="1">
+    <Border x:Name="ApiSetupNotice" Background="#19212B" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="5" Padding="10,8" Margin="0,0,0,8" Visibility="Collapsed">
+      <DockPanel><Button x:Name="ApiSetupButton" DockPanel.Dock="Right" Content="Thiết lập API key" Click="Configure" Padding="10,4" Margin="12,0,0,0"/><TextBlock Text="Chưa có API key OpenRouter. Mở Cấu hình để đăng ký, lấy key và lưu một lần." TextWrapping="Wrap" VerticalAlignment="Center"/></DockPanel>
+    </Border>
+    <DockPanel Margin="0,0,0,8">
       <Button Content="Chọn tất cả" Click="SelectAll" Padding="10,4"/>
       <TextBlock x:Name="CountLabel" VerticalAlignment="Center" Margin="8,0" Foreground="{StaticResource Muted}"/>
       <TextBlock x:Name="QueueLabel" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource Accent}"/>
     </DockPanel>
+    </StackPanel>
     <Grid Grid.Row="2">
       <TextBlock x:Name="EmptyLabel" Text="Thả ảnh hoặc thư mục vào đây" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="21" Foreground="{StaticResource Muted}"/>
       <ListBox x:Name="QueueList" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Pixel" VirtualizingPanel.CacheLength="0" HorizontalContentAlignment="Stretch">

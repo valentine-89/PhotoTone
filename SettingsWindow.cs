@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -8,7 +9,6 @@ namespace PhotoTone;
 
 public sealed class SettingsWindow : Window
 {
-    private readonly TextBox endpoint = new();
     private readonly PasswordBox key = new();
     private readonly ComboBox model = new() { IsEditable = true, IsTextSearchEnabled = false };
     private readonly ComboBox resolution = new();
@@ -19,34 +19,45 @@ public sealed class SettingsWindow : Window
     public bool AddSamples { get; private set; }
     public string ApiKey => key.Password.Trim();
     public Settings SavedSettings { get; private set; } = new();
-    public SettingsWindow(Settings settings, string apiKey)
+    public SettingsWindow(Settings settings, string apiKey) : this(settings, apiKey, value => AppFiles.SaveSettings(value)) { }
+    internal SettingsWindow(Settings settings, string apiKey, Action<Settings> saveSettings)
     {
-        // A cancelled/failed save must not change the endpoint while retaining the old in-memory key.
+        // Cancelled/failed changes must not mutate the active settings.
         settings = System.Text.Json.JsonSerializer.Deserialize<Settings>(System.Text.Json.JsonSerializer.Serialize(settings))!;
         Style = (Style)FindResource(typeof(Window));
         Title = "Cấu hình PhotoTone"; Width = 610; Height = 780; MinHeight = 500; WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        var panel = new StackPanel { Margin = new Thickness(18) };
-        Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        endpoint.Text = settings.ApiBase; key.Password = apiKey; model.Text = settings.Model;
+        var layout = new DockPanel { Margin = new Thickness(18) }; Content = layout;
+        var footer = new StackPanel(); DockPanel.SetDock(footer, Dock.Bottom); layout.Children.Add(footer);
+        var panel = new StackPanel();
+        layout.Children.Add(new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        key.Password = apiKey; model.Text = settings.Model;
         resolution.ItemsSource = new[] { "Gốc", "4K", "2K", "1K", "512" }; resolution.SelectedItem = settings.Resolution;
         concurrency.SelectedItem = settings.Concurrency; reference.Text = settings.ReferencePath; prompt.Text = settings.Prompt;
-        Label(panel, "API URL", endpoint); Label(panel, "API key", key); Label(panel, "Model", model);
+        panel.Children.Add(new TextBlock { Text = "OpenRouter · " + OpenRouterClient.ApiBase, Foreground = (System.Windows.Media.Brush)FindResource("Muted"), Margin = new Thickness(0, 0, 0, 3) });
+        Label(panel, "API key OpenRouter", key);
+        panel.Children.Add(new TextBlock { Text = "Bấm Lưu để ghi nhớ key trên máy này; mở lại app không cần nhập lại.", TextWrapping = TextWrapping.Wrap, Foreground = (System.Windows.Media.Brush)FindResource("Muted"), FontSize = 12, Margin = new Thickness(0, 5, 0, 8) });
+        var guide = new StackPanel { Margin = new Thickness(0, 8, 0, 4) };
+        guide.Children.Add(new TextBlock { Text = "1. Đăng ký hoặc đăng nhập tài khoản OpenRouter.\n2. Mở API Keys, tạo key mới (có thể đặt tên PhotoTone) và sao chép key.\n3. Dán key vào ô bên trên rồi bấm Lưu.\nModel ảnh tính phí cần có credits trong tài khoản OpenRouter.", TextWrapping = TextWrapping.Wrap });
+        var links = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) }; guide.Children.Add(links);
+        Link(links, "Đăng ký / Đăng nhập", "https://openrouter.ai/");
+        Link(links, "Lấy API key", "https://openrouter.ai/settings/keys");
+        Link(links, "Nạp credits", "https://openrouter.ai/settings/credits");
+        panel.Children.Add(new Expander { Header = "Hướng dẫn lấy API key", Foreground = Foreground, IsExpanded = string.IsNullOrWhiteSpace(apiKey), Content = guide });
+        Label(panel, "Model", model);
         var refresh = new Button { Content = "Tải model", Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Right }; panel.Children.Add(refresh);
         refresh.Click += async (_, _) =>
         {
-            refresh.IsEnabled = false; var requestedEndpoint = endpoint.Text.Trim();
+            refresh.IsEnabled = false;
             try
             {
                 using var client = new OpenRouterClient(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-                var models = await client.ModelsAsync(requestedEndpoint, timeout.Token);
-                if (requestedEndpoint != endpoint.Text.Trim()) return;
+                var models = await client.ModelsAsync(OpenRouterClient.ApiBase, timeout.Token);
                 var selected = model.Text; model.ItemsSource = models; model.SelectedItem = models.FirstOrDefault(m => m.Id == selected); model.Text = selected;
                 status.Text = $"{models.Count} model";
             }
             catch (Exception ex) { status.Text = ex.Message; }
             finally { refresh.IsEnabled = true; }
         };
-        endpoint.TextChanged += (_, _) => { key.Clear(); model.ItemsSource = null; };
         model.SelectionChanged += (_, _) =>
         {
             if (model.SelectedItem is not ImageModel selected) return;
@@ -57,24 +68,29 @@ public sealed class SettingsWindow : Window
         var choose = new Button { Content = "Đổi ảnh mẫu", HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) }; panel.Children.Add(choose);
         choose.Click += (_, _) => { var picker = new OpenFileDialog { Filter = PhotoImporter.Filter }; if (picker.ShowDialog(this) == true) reference.Text = picker.FileName; };
         Label(panel, "Prompt ban đầu", prompt);
-        var actions = new WrapPanel { Margin = new Thickness(0, 12, 0, 8) }; panel.Children.Add(actions);
+        var actions = new WrapPanel { Margin = new Thickness(0, 12, 0, 8) }; footer.Children.Add(actions);
         var reset = new Button { Content = "Prompt mặc định" }; reset.Click += (_, _) => prompt.Text = AppFiles.DefaultPrompt; actions.Children.Add(reset);
         var samples = new Button { Content = "Thêm bộ ảnh mẫu" }; samples.Click += (_, _) => { AddSamples = true; status.Text = "Bộ mẫu sẽ được thêm khi lưu."; }; actions.Children.Add(samples);
-        var save = new Button { Content = "Lưu", Style = (Style)FindResource("Primary") }; actions.Children.Add(save); panel.Children.Add(status);
+        var save = new Button { Content = "Lưu", Style = (Style)FindResource("Primary") }; actions.Children.Add(save); footer.Children.Add(status);
         save.Click += (_, _) =>
         {
             try
             {
-                OpenRouterClient.Endpoint(endpoint.Text, "images");
                 if (resolution.SelectedItem is not string selected) throw new InvalidOperationException("Chọn độ phân giải.");
                 var protectedKey = SecretStore.Protect(ApiKey);
-                settings.ApiBase = endpoint.Text.Trim().TrimEnd('/'); settings.KeyEndpoint = settings.ApiBase; settings.EncryptedKey = protectedKey;
+                settings.ApiBase = OpenRouterClient.ApiBase; settings.KeyEndpoint = OpenRouterClient.ApiBase; settings.EncryptedKey = protectedKey;
                 settings.Model = model.Text.Trim(); settings.Resolution = selected; settings.Concurrency = (int)(concurrency.SelectedItem ?? 1);
                 settings.ReferencePath = reference.Text; settings.Prompt = prompt.Text;
-                AppFiles.SaveSettings(settings); SavedSettings = settings; DialogResult = true;
+                saveSettings(settings); SavedSettings = settings; DialogResult = true;
             }
             catch (Exception ex) { status.Text = ex.Message; }
         };
+    }
+    private void Link(Panel panel, string title, string url)
+    {
+        var button = new Button { Content = title, Padding = new Thickness(9, 5, 9, 5) };
+        button.Click += (_, _) => { try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch (Exception ex) { status.Text = ex.Message; } };
+        panel.Children.Add(button);
     }
     private static void Label(Panel panel, string title, UIElement input)
     {

@@ -41,11 +41,26 @@ internal static class UiSmoke
         viewer.Canvases.First().ActualPixels();
         Save(viewer, Path.ChangeExtension(output, ".zoom.png"), 1); Save(viewer, Path.ChangeExtension(output, ".zoom.150.png"), 1.5); viewer.Close();
         var settings = new Settings { ReferencePath = source, Prompt = AppFiles.DefaultPrompt };
-        var config = new SettingsWindow(settings, "test-only-not-a-real-key") { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
+        var configFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(output))!, "settings-smoke-" + Guid.NewGuid().ToString("N") + ".json");
+        var config = new SettingsWindow(settings, "", saved => AppFiles.SaveSettings(saved, configFile)) { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
         config.Show(); await Ready();
-        Find<TextBox>(config).First(t => t.Text == settings.ApiBase).Text = "https://unit-test.invalid/api/v1";
-        if (Find<PasswordBox>(config).Single().Password.Length != 0 || settings.ApiBase != "https://openrouter.ai/api/v1") throw new Exception("Endpoint change retained key or mutated live settings.");
-        Save(config, Path.ChangeExtension(output, ".settings.png"), 1); config.Close();
+        if (Find<TextBox>(config).Any(t => t.Text == OpenRouterClient.ApiBase) || !Find<Expander>(config).Single().IsExpanded) throw new Exception("Editable endpoint or missing first-use guidance.");
+        Save(config, Path.ChangeExtension(output, ".settings.png"), 1); Save(config, Path.ChangeExtension(output, ".settings.150.png"), 1.5);
+        config.Close();
+        if (File.Exists(configFile)) throw new Exception("Closing configuration saved changes.");
+        const string testKey = "test-only-not-a-real-key";
+        try
+        {
+            var saveConfig = new SettingsWindow(settings, testKey, saved => AppFiles.SaveSettings(saved, configFile)) { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
+            saveConfig.Loaded += (_, _) => Find<Button>(saveConfig).Single(b => b.Content?.ToString() == "Lưu").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (saveConfig.ShowDialog() != true) throw new Exception("Configuration save did not finish.");
+            var restored = AppFiles.LoadSettings(configFile);
+            var reopen = new SettingsWindow(restored, AppFiles.LoadApiKey(restored), _ => throw new Exception("Reopen must not save")) { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
+            reopen.Show(); await Ready();
+            if (Find<PasswordBox>(reopen).Single().Password != testKey || Find<Expander>(reopen).Single().IsExpanded || File.ReadAllText(configFile).Contains(testKey)) throw new Exception("Key did not persist privately across dialogs.");
+            Save(reopen, Path.ChangeExtension(output, ".settings-saved.png"), 1); reopen.Close();
+        }
+        finally { if (File.Exists(configFile)) File.Delete(configFile); }
         var update = new UpdateWindow(GitHubUpdates.ParseRelease(UpdateTests.ReleaseJson("9.9.9"))!) { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
         update.Show(); await Ready();
         if (Find<Button>(update).Single(b => b.Content?.ToString() == "Cập nhật và mở lại").IsEnabled != UpdateInstaller.CanInstall) throw new Exception("Update installation availability incorrect.");
@@ -54,7 +69,7 @@ internal static class UiSmoke
         Save(update, Path.ChangeExtension(output, ".update-notes.png"), 1);
         update.Close();
         if (update.Prepared is not null) throw new Exception("Closing update prompt initiated an update.");
-        AppFiles.AtomicJson(output + ".json", new { loaded = true, jobs = window.Jobs.Count, firstRealized, lastRealized, updatePrompt = true, renderDpi = new[] { 96, 144 }, billableRequests = 0 });
+        AppFiles.AtomicJson(output + ".json", new { loaded = true, jobs = window.Jobs.Count, firstRealized, lastRealized, updatePrompt = true, apiKeySavedAndReopened = true, fixedOpenRouterEndpoint = true, renderDpi = new[] { 96, 144 }, billableRequests = 0 });
     }
     private static async Task Ready() { await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); await Task.Delay(70); }
     private static async Task WaitPreviews(DependencyObject root)

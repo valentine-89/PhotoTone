@@ -50,7 +50,7 @@ public sealed class PhotoJob : Observable
 
 public sealed class Settings
 {
-    public string ApiBase { get; set; } = "https://openrouter.ai/api/v1";
+    public string ApiBase { get; set; } = OpenRouterClient.ApiBase;
     public string EncryptedKey { get; set; } = "";
     public string KeyEndpoint { get; set; } = "";
     public string Model { get; set; } = "google/gemini-3.1-flash-image";

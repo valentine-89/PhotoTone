@@ -20,6 +20,16 @@ Bản 1.1 trở về trước chưa có tính năng này: tải và giải nén 
 
 Danh sách dùng virtualization và preview nhỏ; bản đầy đủ chỉ đọc khi xử lý, xuất hoặc mở lớn. Thêm ảnh không tự gọi API.
 
+## Đăng ký OpenRouter và lưu API key
+
+PhotoTone cố định API tại `https://openrouter.ai/api/v1`; không cần nhập hoặc thay URL. Khi chưa có key, bàn làm việc hiện **Thiết lập API key** và Cấu hình mở sẵn hướng dẫn:
+
+1. Vào [OpenRouter](https://openrouter.ai/) để đăng ký hoặc đăng nhập.
+2. Mở [API Keys](https://openrouter.ai/settings/keys), tạo key mới (đặt tên PhotoTone nếu muốn) rồi sao chép key.
+3. Dán vào **API key OpenRouter** trong Cấu hình và bấm **Lưu**. [Nạp credits](https://openrouter.ai/settings/credits) để dùng model ảnh tính phí. Các nút mở trang này có sẵn trong app. Xem [hướng dẫn chính thức](https://openrouter.ai/support) nếu cần hỗ trợ tài khoản.
+
+Key được ghi vào file `%LOCALAPPDATA%\PhotoTone\settings.json` dưới dạng mã hóa bằng tài khoản Windows hiện tại và tự nạp khi mở app; không phải nhập lại mỗi lần. Key OpenRouter đã lưu từ bản trước tiếp tục dùng được. Key từng lưu cho endpoint khác được giữ trong config nhưng không được dùng để gọi OpenRouter; cần nhập key OpenRouter trong Cấu hình.
+
 ## Chỉnh bổ sung
 
 Bấm **Chỉnh bổ sung** ở ảnh đã có kết quả. Lượt mới lấy kết quả hiện tại làm đầu vào.
@@ -53,7 +63,7 @@ Cấu hình và key DPAPI CurrentUser tại `%LOCALAPPDATA%\PhotoTone\settings.j
 - Kết quả thiếu pixel hoặc sai tỷ lệ quá 0,75% bị từ chối; không upscale bù. Kết quả lớn hơn được hạ về đúng kích thước ảnh gốc, crop căn giữa tối thiểu khi có sai số làm tròn.
 - JPEG/PNG xuất giữ kích thước ảnh gốc và profile sRGB. Manifest giữ dấu nhận diện nguồn, model, prompt, vùng chọn, mã yêu cầu và chi phí API khi có.
 
-API URL phải dùng hợp đồng OpenRouter Image API (`GET /images/models`, `POST /images`), không phải API chat bất kỳ. Đổi endpoint xóa key khỏi ô nhập; app không có sẵn key, không tự gọi API sinh ảnh khi mở. Luôn `allow_fallbacks=false`; không tự đổi model/provider hoặc retry yêu cầu tính phí.
+App chỉ gọi OpenRouter Image API (`GET /images/models`, `POST /images`) tại địa chỉ cố định; sửa URL trong config cũng không đổi máy chủ gửi yêu cầu. App không có sẵn key, không tự gọi API sinh ảnh khi mở. Luôn `allow_fallbacks=false`; không tự đổi model/provider hoặc retry yêu cầu tính phí.
 
 Mỗi lượt xử lý/chỉnh bổ sung có thể tính phí từ tài khoản API. Kích thước đúng không bảo đảm AI giữ nguyên mọi chi tiết, đồ vật hoặc hình học; xem lại kết quả trước khi sử dụng. Kết quả bị app từ chối sau khi provider đã xử lý vẫn có thể tính phí.
 

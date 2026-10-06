@@ -36,7 +36,7 @@ internal static class SelfTests
         var sourcePath = Path.Combine(root, "source.jpg"); File.WriteAllBytes(sourcePath, asset);
         var reference = Path.Combine(root, "reference.jpg");
         using (var resource = AppFiles.Resource("ok.jpg")) using (var file = File.Create(reference)) resource.CopyTo(file);
-        var options = new BatchOptions("https://unit-test.invalid/api/v1", "test-secret-not-real", model, "4K", 2, "JPEG", reference, AppFiles.DefaultPrompt, root);
+        var options = new BatchOptions(OpenRouterClient.ApiBase, "test-secret-not-real", model, "4K", 2, "JPEG", reference, AppFiles.DefaultPrompt, root);
 
         await Check("Embedded originals: all 2560x1709, default prompt present", () =>
         {
@@ -103,11 +103,47 @@ internal static class SelfTests
             Reject(() => OpenRouterClient.RequestBody(options with { Model = new("test/unknown", "Unknown", fixedModel.Parameters), Resolution = "Gốc" }, new(2560, 1709), "s", "r"), "không công bố");
             return Task.CompletedTask;
         });
-        await Check("HTTPS endpoint validation", () =>
+        await Check("Only the fixed OpenRouter endpoint and image routes are accepted", () =>
         {
-            foreach (var url in new[] { "http://example.org/v1", "https://user:pass@example.org/v1", "https://example.org/v1?key=secret" })
-                Reject(() => OpenRouterClient.Endpoint(url, "images"), "HTTPS");
+            foreach (var url in new[] { "http://openrouter.ai/api/v1", "https://user:pass@openrouter.ai/api/v1", "https://openrouter.ai/api/v1?key=secret", "https://openrouter.ai/api/v1#x", "https://unit-test.invalid/api/v1", "https://openrouter.ai:8443/api/v1", "https://openrouter.ai/other" })
+                Reject(() => OpenRouterClient.Endpoint(url, "images"), "OpenRouter");
             Assert(OpenRouterClient.Endpoint("https://openrouter.ai/api/v1", "images").AbsoluteUri == "https://openrouter.ai/api/v1/images", "Wrong API route");
+            foreach (var route in new[] { "../images", "https://unit-test.invalid/", "/images" }) Reject(() => OpenRouterClient.Endpoint(OpenRouterClient.ApiBase, route), "OpenRouter");
+            return Task.CompletedTask;
+        });
+        await Check("Custom API endpoints are blocked before HTTP and do not receive credentials", async () =>
+        {
+            var handler = new FakeHandler(_ => new(HttpStatusCode.OK)); using var client = new OpenRouterClient(handler);
+            try { await client.EditAsync(options with { ApiBase = "https://unit-test.invalid/api/v1" }, new(2560, 1709), "s", "r", default); throw new Exception("Custom image endpoint allowed"); } catch (ArgumentException) { }
+            try { await client.ModelsAsync("https://unit-test.invalid/api/v1", default); throw new Exception("Custom catalog endpoint allowed"); } catch (ArgumentException) { }
+            Assert(handler.Calls == 0, "HTTP sent before endpoint validation");
+        });
+        await Check("Saved config restores the encrypted key and preferences after reopen", () =>
+        {
+            var file = Path.Combine(root, "settings.json"); const string key = "saved-test-key-not-real";
+            var original = new Settings { EncryptedKey = SecretStore.Protect(key), KeyEndpoint = OpenRouterClient.ApiBase, Prompt = "keep prompt", Concurrency = 3, Model = "keep/model", OutputDirectory = root };
+            AppFiles.SaveSettings(original, file);
+            var restored = AppFiles.LoadSettings(file);
+            Assert(AppFiles.LoadApiKey(restored) == key, "Saved key not restored");
+            Assert(!File.ReadAllText(file).Contains(key) && restored.Prompt == original.Prompt && restored.Concurrency == 3 && restored.Model == original.Model && restored.OutputDirectory == root, "Key exposed or preferences lost");
+            return Task.CompletedTask;
+        });
+        await Check("Legacy OpenRouter keys migrate while unrelated keys stay isolated across saves", () =>
+        {
+            var file = Path.Combine(root, "legacy-settings.json"); var encrypted = SecretStore.Protect("legacy-test-key");
+            AppFiles.AtomicJson(file, new Settings { ApiBase = OpenRouterClient.ApiBase + "/", EncryptedKey = encrypted });
+            var known = AppFiles.LoadSettings(file);
+            Assert(known.ApiBase == OpenRouterClient.ApiBase && AppFiles.LoadApiKey(known) == "legacy-test-key", "Lost legacy OpenRouter key");
+            foreach (var origin in new string?[] { "https://unit-test.invalid/api/v1", null, "" })
+            {
+                AppFiles.AtomicJson(file, new { ApiBase = origin, KeyEndpoint = "", EncryptedKey = encrypted, Prompt = "keep" });
+                var other = AppFiles.LoadSettings(file);
+                for (int i = 0; i < 2; i++)
+                {
+                    Assert(other.ApiBase == OpenRouterClient.ApiBase && AppFiles.LoadApiKey(other) == "" && other.EncryptedKey == encrypted, "Reused or deleted unrelated key");
+                    AppFiles.SaveSettings(other, file); other = AppFiles.LoadSettings(file);
+                }
+            }
             return Task.CompletedTask;
         });
         await Check("DPAPI key roundtrip", () =>

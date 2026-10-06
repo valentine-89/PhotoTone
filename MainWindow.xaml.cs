@@ -41,7 +41,7 @@ public partial class MainWindow : Window
             {
                 foreach (var job in workspace.Load()) Jobs.Add(job);
                 workspace.Save(Jobs); workspace.Prune(Jobs);
-                try { if (settings.KeyEndpoint == settings.ApiBase.TrimEnd('/')) apiKey = SecretStore.Unprotect(settings.EncryptedKey); }
+                try { apiKey = AppFiles.LoadApiKey(settings); }
                 catch { SetStatus("Không đọc được API key đã lưu. Nhập lại trong Cấu hình."); }
             }
             catch { workspace.Dispose(); throw; }
@@ -72,6 +72,8 @@ public partial class MainWindow : Window
         StopButton.IsEnabled = preparing || runner.IsBusy;
         CleanButton.IsEnabled = !runner.IsBusy && !preparing && !exporting && importing == 0 && !closing && !previewOnly;
         ConfigButton.IsEnabled = !runner.IsBusy && !preparing && !closing && !previewOnly;
+        ApiSetupNotice.Visibility = string.IsNullOrWhiteSpace(apiKey) ? Visibility.Visible : Visibility.Collapsed;
+        ApiSetupButton.IsEnabled = ConfigButton.IsEnabled;
         ExportButton.IsEnabled = !exporting && !closing && !previewOnly && Jobs.Any(j => j.Current is not null);
         if (pendingRelease is not null) Dispatcher.BeginInvoke(new Action(OfferPendingUpdate));
     }
@@ -128,9 +130,9 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(apiKey)) throw new InvalidOperationException("Nhập API key trong Cấu hình.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(25));
-        var models = await client.ModelsAsync(settings.ApiBase, timeout.Token);
+        var models = await client.ModelsAsync(OpenRouterClient.ApiBase, timeout.Token);
         var model = models.FirstOrDefault(m => m.Id == settings.Model) ?? throw new InvalidOperationException("Model không có trong Image API. Chọn lại trong Cấu hình.");
-        return new(settings.ApiBase, apiKey, model, settings.Resolution, settings.Concurrency, "PNG", settings.ReferencePath, settings.Prompt, workspace!.Root);
+        return new(OpenRouterClient.ApiBase, apiKey, model, settings.Resolution, settings.Concurrency, "PNG", settings.ReferencePath, settings.Prompt, workspace!.Root);
     }
     private async void StartBatch(object sender, RoutedEventArgs e)
     {
