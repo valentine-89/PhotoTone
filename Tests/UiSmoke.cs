@@ -46,7 +46,15 @@ internal static class UiSmoke
         Find<TextBox>(config).First(t => t.Text == settings.ApiBase).Text = "https://unit-test.invalid/api/v1";
         if (Find<PasswordBox>(config).Single().Password.Length != 0 || settings.ApiBase != "https://openrouter.ai/api/v1") throw new Exception("Endpoint change retained key or mutated live settings.");
         Save(config, Path.ChangeExtension(output, ".settings.png"), 1); config.Close();
-        AppFiles.AtomicJson(output + ".json", new { loaded = true, jobs = window.Jobs.Count, firstRealized, lastRealized, renderDpi = new[] { 96, 144 }, billableRequests = 0 });
+        var update = new UpdateWindow(GitHubUpdates.ParseRelease(UpdateTests.ReleaseJson("9.9.9"))!) { ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -10000, Top = -10000 };
+        update.Show(); await Ready();
+        if (Find<Button>(update).Single(b => b.Content?.ToString() == "Cập nhật và mở lại").IsEnabled != UpdateInstaller.CanInstall) throw new Exception("Update installation availability incorrect.");
+        Save(update, Path.ChangeExtension(output, ".update.png"), 1); Save(update, Path.ChangeExtension(output, ".update.150.png"), 1.5);
+        Find<Expander>(update).Single().IsExpanded = true; await Ready();
+        Save(update, Path.ChangeExtension(output, ".update-notes.png"), 1);
+        update.Close();
+        if (update.Prepared is not null) throw new Exception("Closing update prompt initiated an update.");
+        AppFiles.AtomicJson(output + ".json", new { loaded = true, jobs = window.Jobs.Count, firstRealized, lastRealized, updatePrompt = true, renderDpi = new[] { 96, 144 }, billableRequests = 0 });
     }
     private static async Task Ready() { await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); await Task.Delay(70); }
     private static async Task WaitPreviews(DependencyObject root)

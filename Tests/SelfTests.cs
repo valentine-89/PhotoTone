@@ -196,6 +196,7 @@ internal static class SelfTests
             Assert(handler.Calls == 0 && cancelled == 3, "Cancelled queue sent requests");
         });
         await WorkspaceTests.RunAsync(root, options, Check);
+        await UpdateTests.RunAsync(root, Check);
         var json = JsonSerializer.Serialize(checks); using var checkDoc = JsonDocument.Parse(json);
         int failed = checkDoc.RootElement.EnumerateArray().Count(item => !item.GetProperty("passed").GetBoolean());
         AppFiles.AtomicJson(reportPath, new { total = checks.Count, passed = checks.Count - failed, failed, checks });

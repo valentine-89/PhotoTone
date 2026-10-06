@@ -5,13 +5,15 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <AssemblyName>PhotoTone</AssemblyName>
+    <ApplicationIcon>Assets\PhotoTone.ico</ApplicationIcon>
     <RootNamespace>PhotoTone</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets\PhotoTone.ico" />
     <EmbeddedResource Include="Assets\*.jpg" />
     <EmbeddedResource Include="Assets\default-prompt.txt" />
   </ItemGroup>

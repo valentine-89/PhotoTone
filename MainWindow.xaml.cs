@@ -29,6 +29,7 @@ public partial class MainWindow : Window
     {
         this.previewOnly = previewOnly;
         InitializeComponent();
+        BrandIcon.Source = new System.Windows.Media.Imaging.IconBitmapDecoder(new Uri("pack://application:,,,/Assets/PhotoTone.ico"), System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat, System.Windows.Media.Imaging.BitmapCacheOption.OnLoad).Frames.MaxBy(f => f.PixelWidth);
         runner = new BatchRunner(ProcessItemAsync); runner.Changed += UpdateControls;
         runner.Failed += (item, ex) => FailItem(item, ex);
         AppFiles.Initialize();
@@ -55,6 +56,7 @@ public partial class MainWindow : Window
         }
         QueueList.ItemsSource = Jobs;
         runner.Concurrency = settings.Concurrency; initialized = true; UpdateControls();
+        InitializeUpdates();
     }
     private void SetStatus(string text) => StatusLabel.Text = text;
     private void Persist() { if (!previewOnly) workspace!.Save(Jobs); }
@@ -71,6 +73,7 @@ public partial class MainWindow : Window
         CleanButton.IsEnabled = !runner.IsBusy && !preparing && !exporting && importing == 0 && !closing && !previewOnly;
         ConfigButton.IsEnabled = !runner.IsBusy && !preparing && !closing && !previewOnly;
         ExportButton.IsEnabled = !exporting && !closing && !previewOnly && Jobs.Any(j => j.Current is not null);
+        if (pendingRelease is not null) Dispatcher.BeginInvoke(new Action(OfferPendingUpdate));
     }
     private void SelectionUpdated(object sender, RoutedEventArgs e) { if (initialized) SafePersist(); }
     private void SelectAll(object sender, RoutedEventArgs e) { bool value = Jobs.Any(j => !j.Selected); foreach (var job in Jobs) job.Selected = value; SafePersist(); }
@@ -287,6 +290,7 @@ public partial class MainWindow : Window
     }
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
+        if (updateStarting && !updateHandoff) { e.Cancel = true; return; }
         if (closing) { e.Cancel = true; return; }
         if (runner.IsBusy || preparing || exporting || importing > 0)
         {
@@ -295,7 +299,7 @@ public partial class MainWindow : Window
             while (preparing || importing > 0) await Task.Delay(50);
             closing = false; Close(); return;
         }
-        try { if (initialized) Persist(); }
+        try { if (initialized && !updateHandoff) Persist(); }
         catch (Exception ex)
         {
             e.Cancel = true;

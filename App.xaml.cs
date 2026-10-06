@@ -10,6 +10,27 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.Length == 2 && (e.Args[0] == "--update-smoke" || Tests.UpdateSmoke.IsChild && e.Args[0] is "--update-smoke-parent" or "--update-result"))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            try
+            {
+                int code = e.Args[0] switch
+                {
+                    "--update-smoke" => await Tests.UpdateSmoke.RunAsync(e.Args[1]),
+                    "--update-smoke-parent" => await Tests.UpdateSmoke.ParentAsync(e.Args[1]),
+                    _ => Tests.UpdateSmoke.Finish(e.Args[1])
+                };
+                Shutdown(code);
+            }
+            catch (Exception ex) { File.WriteAllText(e.Args[1] + ".error.txt", ex.ToString()); Shutdown(1); }
+            return;
+        }
+        if (e.Args.Length == 2 && e.Args[0] == "--apply-update")
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Shutdown(await Core.UpdateInstaller.RunHelperAsync(e.Args[1])); return;
+        }
         if (e.Args.Length >= 2 && e.Args[0] == "--self-test")
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -40,6 +61,8 @@ public partial class App : Application
         try
         {
             var window = new MainWindow(previewOnly: e.Args.Length >= 2 && e.Args[0] == "--smoke-test"); MainWindow = window;
+            if (e.Args.Length == 2 && e.Args[0] == "--update-result" && Core.UpdateInstaller.ReadOutcome(e.Args[1]) is { } outcome)
+                window.Loaded += (_, _) => window.ShowUpdateOutcome(outcome);
             if (e.Args.Length >= 2 && e.Args[0] == "--smoke-test")
             {
                 window.ShowActivated = false; window.Left = -10000; window.Top = -10000;

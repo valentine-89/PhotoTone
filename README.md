@@ -1,6 +1,14 @@
-# PhotoTone 1.1
+# PhotoTone 1.2
 
 Ứng dụng Windows .NET 8/WPF chỉnh ảnh nội thất hàng loạt qua OpenRouter Image API. Giải nén ZIP và mở `PhotoTone.exe`; đã có runtime, không cần quyền quản trị.
+
+## Cập nhật ứng dụng
+
+App kiểm tra bản phát hành ổn định mới nhất trên GitHub một lần khi mở. Nếu có bản mới, cửa sổ cho chọn **Cập nhật và mở lại**, **Để sau** hoặc **Xem trên GitHub**. Bấm phiên bản ở chân cửa sổ để kiểm tra thủ công. Lời nhắc được hoãn khi đang nhập, xử lý, xuất ảnh hoặc mở cửa sổ khác. Mất mạng/lỗi GitHub khi kiểm tra tự động không làm gián đoạn công việc.
+
+Chỉ sau khi đồng ý, app mới tải ZIP, đối chiếu SHA-256 do GitHub công bố và checksum ZIP/EXE, kiểm tra đúng phiên bản Windows x64, lưu bàn làm việc rồi thay EXE và mở lại. Có thể hủy trong lúc tải. Lỗi tải/xác minh giữ bản đang dùng; lỗi thay file hoặc khởi chạy sẽ cố khôi phục EXE cũ. App không xin quyền quản trị: thư mục chứa EXE phải cho phép ghi, nếu không có thể tải ZIP qua nút GitHub. Cấu hình, key, cache ảnh và file đã xuất được giữ nguyên. Không tải bản thử nghiệm, không tự cài khi mở app và không dùng API key OpenRouter để kiểm tra GitHub.
+
+Bản 1.1 trở về trước chưa có tính năng này: tải và giải nén bản 1.2 một lần; các lần tiếp theo có thể cập nhật ngay trong app.
 
 ## Bàn làm việc
 
@@ -60,7 +68,7 @@ pwsh -File .\scripts\build.ps1 -Publish
 pwsh -File .\scripts\package.ps1
 ```
 
-`--self-test <report.json>` chạy kiểm thử API giả lập, nhập 500 ảnh, hàng đợi, vùng chọn, cache, xuất, hoàn tác và lỗi. `--smoke-test <screenshot.png>` render giao diện chính, chỉnh bổ sung, ảnh tham chiếu và zoom; kiểm tra virtualization với 500 hàng và xuất ảnh render 96/144 DPI. Các chế độ này không đọc/ghi API key hoặc cấu hình người dùng, không mở listener hoặc gọi API sinh ảnh có phí. Smoke test dùng ảnh mẫu có sẵn để kiểm tra bố cục, không phải kết quả AI thực tế.
+`--self-test <report.json>` chạy kiểm thử API giả lập, nhập 500 ảnh, hàng đợi, vùng chọn, cache, xuất, hoàn tác và lỗi; thêm kiểm thử phiên bản GitHub, tải/checksum, ZIP và hoàn nguyên cập nhật. `--smoke-test <screenshot.png>` render giao diện chính, chỉnh bổ sung, ảnh tham chiếu, zoom và lời nhắc cập nhật; kiểm tra virtualization với 500 hàng và xuất ảnh render 96/144 DPI. `--update-smoke <report.json>` trên bản EXE kiểm tra trình cập nhật thật bằng bản sao riêng: đóng tiến trình cha, thay EXE khác checksum rồi mở lại. Các chế độ này không đọc/ghi API key, cấu hình hoặc bàn làm việc người dùng, không mở listener hoặc gọi API sinh ảnh có phí. Smoke test dùng ảnh mẫu có sẵn để kiểm tra bố cục, không phải kết quả AI thực tế.
 
 Build/test/mock và ảnh render không thay thế nghiệm thu chất lượng model thật hoặc thao tác kéo box trên các màn hình/DPI khác nhau. Hai tình huống mây/cửa sổ và cân bằng trắng tường vẫn cần kiểm tra bằng lượt AI thật được cho phép.
 
